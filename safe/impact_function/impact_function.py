@@ -20,7 +20,7 @@ from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsRectangle,
     QgsVectorLayer,
-    QGis,
+    QGis
 )
 
 import logging
@@ -60,15 +60,16 @@ from safe.gis.raster.align import align_rasters
 from safe.gis.raster.rasterize import rasterize_vector_layer
 from safe.definitions.post_processors import post_processors
 from safe.definitions.analysis_steps import analysis_steps
-from safe.definitions.utilities import definition
+from safe.definitions.utilities import definition, get_non_compulsory_fields
 from safe.definitions.exposure import indivisible_exposure
 from safe.definitions.fields import (
     size_field,
     exposure_class_field,
     hazard_class_field,
-    count_ratio_mapping,
 )
+from safe.definitions import count_ratio_mapping
 from safe.definitions.layer_purposes import (
+    layer_purpose_exposure,
     layer_purpose_exposure_summary,
     layer_purpose_aggregate_hazard_impacted,
     layer_purpose_aggregation_summary,
@@ -82,6 +83,7 @@ from safe.impact_function.provenance_utilities import (
 )
 from safe.definitions.constants import (
     inasafe_keyword_version_key,
+    GLOBAL,
     ANALYSIS_SUCCESS,
     ANALYSIS_FAILED_BAD_INPUT,
     ANALYSIS_FAILED_BAD_CODE,
@@ -124,14 +126,18 @@ from safe.impact_function.style import (
 )
 from safe.utilities.gis import is_vector_layer, is_raster_layer
 from safe.utilities.i18n import tr
+from safe.utilities.default_values import get_inasafe_default_value_qsetting
 from safe.utilities.unicode import get_unicode
 from safe.utilities.keyword_io import KeywordIO
 from safe.utilities.metadata import (
     active_thresholds_value_maps, active_classification, copy_layer_keywords)
 from safe.utilities.utilities import (
-    replace_accentuated_characters, get_error_message)
+    replace_accentuated_characters,
+    get_error_message,
+    is_keyword_version_supported)
 from safe.utilities.profiling import (
     profile, clear_prof_data, profiling_log)
+from safe.utilities.gis import qgis_version
 from safe.utilities.settings import setting
 from safe import messaging as m
 from safe.messaging import styles
@@ -215,10 +221,11 @@ class ImpactFunction(object):
         }
 
         # Earthquake function
-        self._earthquake_function = None
         value = setting(
             'earthquake_function', EARTHQUAKE_FUNCTIONS[0]['key'], str)
-        self.earthquake_function = value  # Use the setter to check the value.
+        if value not in [model['key'] for model in EARTHQUAKE_FUNCTIONS]:
+            raise WrongEarthquakeFunction
+        self._earthquake_function = value
 
     @property
     def performance_log(self):
@@ -234,8 +241,10 @@ class ImpactFunction(object):
         message = m.Message()
         table = m.Table(style_class='table table-condensed table-striped')
         row = m.Row()
-        row.add(m.Cell(tr('Function')), header_flag=True)
-        row.add(m.Cell(tr('Time')), header_flag=True)
+        row.add(m.Cell(tr('Function'), header=True))
+        row.add(m.Cell(tr('Time'), header=True))
+        if setting(key='memory_profile', expected_type=bool):
+            row.add(m.Cell(tr('Memory'), header=True))
         table.add(row)
 
         if self.performance_log is None:
@@ -260,6 +269,8 @@ class ImpactFunction(object):
 
             new_row.add(m.Cell(text))
             new_row.add(m.Cell(tree.elapsed_time))
+            if setting(key='memory_profile', expected_type=bool):
+                new_row.add(m.Cell(tree.memory_used))
             table.add(new_row)
             if tree.children:
                 for child in tree.children:
@@ -551,22 +562,13 @@ class ImpactFunction(object):
     def earthquake_function(self):
         """The current earthquake function to use.
 
+        There is not setter for the earthquake fatality function. You need to
+        use the key inasafe/earthquake_function in QSettings.
+
         :return: The earthquake function.
         :rtype: str
         """
         return self._earthquake_function
-
-    @earthquake_function.setter
-    def earthquake_function(self, function):
-        """Set the earthquake function to use.
-
-        :param function: The earthquake function to use.
-        :type function: str
-        """
-        if function not in [model['key'] for model in EARTHQUAKE_FUNCTIONS]:
-            raise WrongEarthquakeFunction
-        else:
-            self._earthquake_function = function
 
     @property
     def callback(self):
@@ -721,7 +723,8 @@ class ImpactFunction(object):
             return PREPARE_FAILED_BAD_INPUT, message
 
         version = keywords.get(inasafe_keyword_version_key)
-        if version != inasafe_keyword_version:
+        supported = is_keyword_version_supported(version)
+        if not supported:
             parameters = {
                 'version': inasafe_keyword_version,
                 'source': layer.publicSource()
@@ -1283,6 +1286,8 @@ class ImpactFunction(object):
         if self.aggregate_hazard_impacted:
             self.aggregate_hazard_impacted.keywords[
                 'provenance_data'] = self.provenance
+            self.append_ISO19115_keywords(
+                self.aggregate_hazard_impacted.keywords)
             result, name = self.datastore.add_layer(
                 self._aggregate_hazard_impacted,
                 layer_purpose_aggregate_hazard_impacted['key'])
@@ -1298,6 +1303,8 @@ class ImpactFunction(object):
         if self._exposure.keywords.get('classification'):
             self._exposure_summary_table.keywords[
                 'provenance_data'] = self.provenance
+            self.append_ISO19115_keywords(
+                self._exposure_summary_table.keywords)
             result, name = self.datastore.add_layer(
                 self._exposure_summary_table,
                 layer_purpose_exposure_summary_table['key'])
@@ -1311,6 +1318,7 @@ class ImpactFunction(object):
 
         # Aggregation summary
         self.aggregation_summary.keywords['provenance_data'] = self.provenance
+        self.append_ISO19115_keywords(self.aggregation_summary.keywords)
         result, name = self.datastore.add_layer(
             self._aggregation_summary,
             layer_purpose_aggregation_summary['key'])
@@ -1323,6 +1331,7 @@ class ImpactFunction(object):
 
         # Analysis impacted
         self.analysis_impacted.keywords['provenance_data'] = self.provenance
+        self.append_ISO19115_keywords(self.analysis_impacted.keywords)
         result, name = self.datastore.add_layer(
             self._analysis_impacted, layer_purpose_analysis_impacted['key'])
         if not result:
@@ -1379,11 +1388,6 @@ class ImpactFunction(object):
         self.aggregation.keywords['hazard_keywords'] = dict(
             self.hazard.keywords)
 
-        fatality_rates = {}
-        for model in EARTHQUAKE_FUNCTIONS:
-            fatality_rates[model['key']] = model['fatality_rates']
-        earthquake_function = fatality_rates[self.earthquake_function]
-
         self.set_state_process(
             'hazard', 'Align the hazard layer with the exposure')
         self.set_state_process(
@@ -1406,13 +1410,12 @@ class ImpactFunction(object):
         exposed, self._exposure_summary = exposed_people_stats(
             self.hazard,
             self.exposure,
-            aggregation_aligned,
-            earthquake_function())
+            aggregation_aligned)
         self.debug_layer(self._exposure_summary)
 
         self.set_state_process('impact function', 'Set summaries')
         self._aggregation_summary = make_summary_layer(
-            exposed, self.aggregation, earthquake_function())
+            exposed, self.aggregation)
         self._aggregation_summary.keywords['exposure_keywords'] = dict(
             self.exposure_summary.keywords)
         self._aggregation_summary.keywords['hazard_keywords'] = dict(
@@ -1448,24 +1451,26 @@ class ImpactFunction(object):
                     'The exposure is a vector layer. According to the kind of '
                     'exposure, we need to check if the exposure has some '
                     'counts before adding some default ratios.')
-
-                for count_field in exposure['extra_fields']:
+                non_compulsory_fields = get_non_compulsory_fields(
+                    layer_purpose_exposure['key'], exposure['key'])
+                for count_field in non_compulsory_fields:
                     count_key = count_field['key']
                     if count_key in count_ratio_mapping.keys():
                         ratio_field = count_ratio_mapping[count_key]
                         if count_key not in keywords['inasafe_fields']:
                             # The exposure hasn't a count field, we should add
                             # it.
-                            default = definition(ratio_field)['default_value']
+                            default_value = get_inasafe_default_value_qsetting(
+                                    QSettings(), GLOBAL, ratio_field)
                             keywords['inasafe_default_values'][ratio_field] = (
-                                default['default_value'])
+                                default_value)
                             LOGGER.info(
                                 'The exposure do not have field {count}, we '
                                 'can add {ratio} = {value} to the exposure '
                                 'default values.'.format(
                                     count=count_key,
                                     ratio=ratio_field,
-                                    value=default['default_value']))
+                                    value=default_value))
                         else:
                             LOGGER.info(
                                 'The exposure layer has the count field '
@@ -1479,19 +1484,22 @@ class ImpactFunction(object):
                     'have some counts. We add every global defaults to the '
                     'exposure layer related to the exposure.')
 
-                for count_field in exposure['extra_fields']:
+                non_compulsory_fields = get_non_compulsory_fields(
+                    layer_purpose_exposure['key'], exposure['key'])
+                for count_field in non_compulsory_fields:
                     count_key = count_field['key']
                     if count_key in count_ratio_mapping.keys():
                         ratio_field = count_ratio_mapping[count_key]
-                        default = definition(ratio_field)['default_value']
+                        default_value = get_inasafe_default_value_qsetting(
+                            QSettings(), GLOBAL, ratio_field)
                         keywords['inasafe_default_values'][ratio_field] = (
-                            default['default_value'])
+                            default_value)
                         LOGGER.info(
                             'We are adding {ratio} = {value} to the exposure '
                             'default values.'.format(
                                 count=count_key,
                                 ratio=ratio_field,
-                                value=default['default_value']))
+                                value=default_value))
 
         else:
             self.set_state_info('aggregation', 'provided', True)
@@ -1529,7 +1537,9 @@ class ImpactFunction(object):
                 aggregation_keywords['inasafe_default_values'] = {}
             aggregation_default_fields = aggregation_keywords.get(
                 'inasafe_default_values')
-            for count_field in exposure['extra_fields']:
+            non_compulsory_fields = get_non_compulsory_fields(
+                layer_purpose_exposure['key'], exposure['key'])
+            for count_field in non_compulsory_fields:
                 if count_field['key'] in count_ratio_mapping.keys():
                     ratio_field = count_ratio_mapping[count_field['key']]
                     if count_field['key'] not in exposure_fields:
@@ -1878,8 +1888,12 @@ class ImpactFunction(object):
                 # set this as fallback.
                 self._exposure_summary.keywords['title'] = (
                     layer_purpose_exposure_summary['name'])
-                self._exposure_summary.setLayerName(
-                    self._exposure_summary.keywords['title'])
+                if qgis_version() >= 21800:
+                    self._exposure_summary.setName(
+                        self._exposure_summary.keywords['title'])
+                else:
+                    self._exposure_summary.setLayerName(
+                        self._exposure_summary.keywords['title'])
 
     @profile
     def post_process(self, layer):
@@ -2150,18 +2164,18 @@ class ImpactFunction(object):
         hazard = definition(self.hazard.keywords.get('hazard'))
         fields.extend(specific_notes(hazard, exposure))
 
-        if self.earthquake_function is not None:
+        if self._earthquake_function is not None:
             # Get notes specific to the fatality model
             for fatality_model in EARTHQUAKE_FUNCTIONS:
-                if fatality_model['key'] == self.earthquake_function:
+                if fatality_model['key'] == self._earthquake_function:
                     fields.extend(fatality_model.get('notes', []))
 
         return fields
 
     def action_checklist(self):
-        """Return the action check list.
+        """Return the list of action check list dictionary.
 
-        :return: The action check list.
+        :return: The list of action check list dictionary.
         :rtype: list
         """
         actions = []
@@ -2173,3 +2187,25 @@ class ImpactFunction(object):
 
         actions.extend(specific_actions(hazard, exposure))
         return actions
+
+    # noinspection PyPep8Naming
+    @staticmethod
+    def append_ISO19115_keywords(keywords):
+        """Append ISO19115 from setting to keywords.
+
+        :param keywords: The keywords destination.
+        :type keywords: dict
+        """
+        # Map setting's key and metadata key
+        ISO19115_mapping = {
+            'ISO19115_ORGANIZATION': 'organisation',
+            'ISO19115_URL': 'url',
+            'ISO19115_EMAIL': 'email',
+            'ISO19115_TITLE': 'title',
+            'ISO19115_LICENSE': 'license'
+        }
+        ISO19115_keywords = {}
+        # Getting value from setting.
+        for key, value in ISO19115_mapping.items():
+            ISO19115_keywords[value] = setting(key, expected_type=str)
+        keywords.update(ISO19115_keywords)

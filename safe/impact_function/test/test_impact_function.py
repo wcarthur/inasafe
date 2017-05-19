@@ -485,7 +485,7 @@ class TestImpactFunction(unittest.TestCase):
             displaced_field['field_name'])
         displaced_population = analysis.uniqueValues(index)[0]
         self.assertEqual(
-            displaced_population * female_ratio, female_displaced)
+            int(displaced_population * female_ratio), female_displaced)
 
         # Check that we have more than 0 youth displaced in the analysis layer
         index = analysis.fieldNameIndex(
@@ -593,7 +593,7 @@ class TestImpactFunction(unittest.TestCase):
         self.assertEqual(0, status, steps)
         # self.assertDictEqual(expected_steps, steps, scenario_path)
         try:
-            self.assertDictEqual(expected_steps, steps)
+            self.assertDictEqual(byteify(expected_steps), byteify(steps))
         except AssertionError as e:
             raise AssertionError(e.message + '\nThe file is ' + scenario_path)
         # - 1 because I added the profiling table, and this table is not
@@ -616,10 +616,12 @@ class TestImpactFunction(unittest.TestCase):
             'polygon_classified_on_line': False,
             'polygon_classified_on_point': False,
             'polygon_classified_on_vector_population': False,
+            'polygon_classified_on_vector_population_multi_fields': False,
             'polygon_continuous_on_line': False,
             'raster_classified_on_classified_raster': False,
             'raster_classified_on_indivisible_polygons_with_grid': False,
             'raster_classified_on_line_with_grid': False,
+            'raster_classified_on_vector_population_multi_fields': False,
             'raster_continuous_on_divisible_polygons_with_grid': False,
             'raster_continuous_on_line': False,
             'raster_continuous_on_raster_population': False,
@@ -769,6 +771,24 @@ class TestImpactFunction(unittest.TestCase):
         })
 
         self.assertDictEqual(expected_provenance, impact_function.provenance)
+
+        # Future reference: I comment out these lines since the keywords
+        # properties are used in the report generation. Removing it will make
+        # the report generation fail. I will just make sure that the other
+        # tools will read from keywords file not from layer properties.
+        # Test to make sure the monkey patch is not updated #4128
+        # self.assertDictEqual(
+        #     expected_provenance['aggregation_keywords'],
+        #     aggregation_layer.keywords
+        # )
+        # self.assertDictEqual(
+        #     expected_provenance['hazard_keywords'],
+        #     hazard_layer.keywords
+        # )
+        # self.assertDictEqual(
+        #     expected_provenance['exposure_keywords'],
+        #     exposure_layer.keywords
+        # )
 
     def test_provenance_without_aggregation(self):
         """Test provenance of impact function without aggregation."""

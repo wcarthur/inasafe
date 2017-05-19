@@ -23,6 +23,7 @@ __revision__ = '$Format:%H$'
 
 
 class TestOptionsDialog(unittest.TestCase):
+
     """Test Options Dialog"""
 
     def setUp(self):
@@ -126,7 +127,8 @@ class TestOptionsDialog(unittest.TestCase):
             self.qsetting.value('inasafe/ISO19115_ORGANIZATION'))
 
         # Open the options dialog
-        dialog = OptionsDialog(PARENT, IFACE, qsetting='InaSAFETest')
+        dialog = OptionsDialog(
+            iface=IFACE, parent=PARENT, qsetting='InaSAFETest')
 
         # Check the state of the dialog after save the settings
         self.assertEqual(new_state, dialog.cbxVisibleLayersOnly.isChecked())

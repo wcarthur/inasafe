@@ -45,7 +45,9 @@ from safe.definitions.fields import (
 from safe.definitions.styles import charcoal_black
 from safe.report.extractors.action_notes import (
     action_checklist_extractor,
-    notes_assumptions_extractor)
+    notes_assumptions_extractor,
+    action_notes_extractor,
+    action_notes_pdf_extractor)
 from safe.report.extractors.aggregate_postprocessors import \
     aggregation_postprocessors_extractor
 from safe.report.extractors.aggregate_result import \
@@ -235,7 +237,7 @@ action_checklist_component = {
     'output_path': 'action-checklist-output.html',
     'template': 'standard-template/'
                 'jinja2/'
-                'bullet-list-section.html',
+                'action-note-categorized.html',
     'extra_args': {
         'header': tr('Action Checklist')
     }
@@ -250,16 +252,23 @@ notes_assumptions_component = {
     'output_path': 'notes-assumptions-output.html',
     'template': 'standard-template/'
                 'jinja2/'
-                'bullet-list-section.html',
+                'action-note-categorized.html',
     'extra_args': {
         'header': tr('Notes and assumptions'),
-        'affected_note_format': tr(
-            'Exposures in this following hazard classes are considered '
-            'affected: {hazard_classes}'
-        ),
-        'displacement_rates_note_format': tr(
-            'For this analysis, the following displacement rates were used: '
-            '{rate_description}'),
+        'affected_note_format': {
+            'item_header': tr('affected notes'),
+            'item_list': [
+                tr('Exposures in this following hazard classes are considered '
+                   'affected: {hazard_classes}')
+            ]
+        },
+        'displacement_rates_note_format': {
+            'item_header': tr('displacement rates notes'),
+            'item_list': [
+                tr('For this analysis, the following displacement rates were '
+                   'used: {rate_description}')
+            ]
+        },
         'hazard_displacement_rates_note_format': tr(
             '{name} - {displacement_rate:.2%}')
     }
@@ -328,6 +337,9 @@ aggregation_postprocessors_component = {
             'gender': {
                 'header': tr('Detailed Gender Report')
             },
+            'vulnerability': {
+                'header': tr('Detailed Vulnerability Report')
+            },
             'minimum_needs': {
                 'header': tr('Detailed Minimum Needs Report')
             }
@@ -343,11 +355,14 @@ aggregation_postprocessors_component = {
                 'Analysis produced 0 displaced count. '
                 'No calculations produced.'),
             'no_gender_rate_message': tr(
-                'Gender ratio not exists. '
+                'Gender ratio not found. '
                 'No calculations produced.'),
             'no_age_rate_message': tr(
-                'Age ratio not exists. '
+                'Age ratio not found. '
                 'No calculations produced.'),
+            'no_vulnerability_rate_message': tr(
+                'Vulnerability ratio not exists. '
+                'No calculations produced.')
         }
     }
 }
@@ -579,6 +594,10 @@ standard_impact_report_metadata_html = {
             'extractor': impact_table_extractor,
             'output_format': Jinja2ComponentsMetadata.OutputFormat.File,
             'output_path': 'impact-report-output.html',
+            'resources': [
+                safe_dir(sub_dir='../resources/css'),
+                safe_dir(sub_dir='../resources/js'),
+                safe_dir(sub_dir='../resources/img')],
             'template': 'standard-template/'
                         'jinja2/'
                         'impact-report-layout.html',
@@ -603,6 +622,29 @@ standard_impact_report_metadata_html = {
                         analysis_provenance_details_component)
                 }
             }
+        },
+        {
+            'key': 'action-checklist-report',
+            'type': jinja2_component_type,
+            'processor': jinja2_renderer,
+            'extractor': action_notes_extractor,
+            'output_format': Jinja2ComponentsMetadata.OutputFormat.File,
+            'output_path': 'action-checklist-output.html',
+            'template': 'standard-template/'
+                        'jinja2/'
+                        'action-checklist-layout.html',
+            'tags': [
+                final_product_tag,
+                table_product_tag,
+                html_product_tag
+            ],
+            'extra_args': {
+                'components_list': {
+                    'action_checklist': action_checklist_component,
+                    'analysis_provenance_details': (
+                        analysis_provenance_details_component)
+                }
+            }
         }
     ]
 }
@@ -621,6 +663,20 @@ standard_impact_report_metadata_pdf = {
             'extractor': impact_table_pdf_extractor,
             'output_format': QgisComposerComponentsMetadata.OutputFormat.PDF,
             'output_path': 'impact-report-output.pdf',
+            'tags': [
+                final_product_tag,
+                table_product_tag,
+                pdf_product_tag
+            ]
+        },
+        # Action Checklist and Notes Report PDF
+        {
+            'key': 'action-checklist-pdf',
+            'type': qgis_composer_component_type,
+            'processor': qgis_composer_html_renderer,
+            'extractor': action_notes_pdf_extractor,
+            'output_format': QgisComposerComponentsMetadata.OutputFormat.PDF,
+            'output_path': 'action-checklist-output.pdf',
             'tags': [
                 final_product_tag,
                 table_product_tag,
