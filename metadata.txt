@@ -15,9 +15,10 @@ qgisMaximumVersion=2.18.99
 description=InaSAFE is free software that allows disaster managers to study realistic natural hazard impact scenarios for better planning, preparedness and response activities.
 about=Developed for the Indonesian Government - BNPB, Australian Government - AIFDR and DMInnovation and, and World Bank - GFDRR
 
-version=4.1.0
+# If you change version and status here, please also change in safe/definitions/versions.py
+version=4.3.0
 # alpha, beta, rc or final
-status=beta
+status=alpha
 
 
 # end of mandatory metadata
@@ -25,21 +26,33 @@ status=beta
 # Optional items:
 
 changelog=
-    Version 4.1.0
-    - Added memory consumption reporting to profiler
-    - Added field mapping tool to support vulnerability breakdowns
-    - Updated help documentation including better table of contents and nicer formatting
-    - Added basic support for saving any html content (dock, help etc.) as pdf via right click context menu
-    - Updated to bootstrap 4
-   
-
+    Version 4.3:
+    - Add extra keywords for supporting rich reporting (e.g. earthquake's epicenter location, depth)
+    - Use aggregation CRS instead of exposure CRS or map canvas CRS if no aggregation layer is provided
+    - Add total exposed field
+    - Add bearing, distance and cardinality postprocessors if we run an earthquake on places
+    - The impact layer from an earthquake on places is ordered by distance
+    - Add new QGIS expressions to fetch information in QGIS Impact layers or keywords
+    - Add a warning if another plugin is conflicting with InaSAFE on the file system
+    - New multi exposure tool where you can run one hazard on many exposures at the same time and get a combined report
+    - Special tool for reporting in the multi exposure dialog to set a custom layer order
+    - Improve code layout (Flake8, PEP 257, PEP8, SideCI ...)
+    - Fix various bugs, like in summary calculation, keyword wizard, productivity post processors
+    - Add metadata converter to version 3.5 to make it work with GeoSAFE
+    - Add InaSAFE Profile to set custom affected and displacement rate
+    - Impact Function serialization
+    - Add welcome message
+    - Support population count and demographic mapping in place exposure
+    - Tidy up metadata (remove unused properties)
+    - Tidy up settings dialog
+    - Use numpy to create contour for shakemap
 
 # tags are comma separated with spaces allowed
-tags=contingency planning, impact assessments, disaster scenarios, natural hazards
+tags=contingency planning, impact assessments, disaster scenarios, natural hazards,risk
 
 homepage=http://www.inasafe.org/
-tracker=https://github.com/AIFDR/inasafe/issues
-repository=https://github.com/AIFDR/inasafe
+tracker=https://github.com/inasafe/inasafe/issues
+repository=https://github.com/inasafe/inasafe
 icon=resources/img/icons/icon.png
 # experimental flag
 experimental=False

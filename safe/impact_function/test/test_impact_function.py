@@ -2,18 +2,20 @@
 
 """Test for Impact Function."""
 
-from copy import deepcopy
 import getpass
-import platform
+import json
+import logging
+import os
+import unittest
+from copy import deepcopy
+from datetime import datetime
+from os import listdir
+from os.path import join, isfile
 from socket import gethostname
 
-import unittest
-import json
-import os
-import logging
-from os.path import join, isfile
-from os import listdir
-
+from safe.common.version import get_version
+from safe.datastore.datastore import DataStore
+from safe.definitions.default_values import female_ratio_default_value
 from safe.definitions.fields import (
     exposure_type_field,
     female_ratio_field,
@@ -25,14 +27,58 @@ from safe.definitions.fields import (
     youth_displaced_count_field,
     displaced_field,
 )
-from safe.definitions.default_values import female_ratio_default_value
 from safe.definitions.layer_purposes import (
     layer_purpose_profiling,
     layer_purpose_analysis_impacted,
     layer_purpose_aggregate_hazard_impacted,
+    layer_purpose_exposure_summary,
+    layer_purpose_exposure_summary_table,
+    layer_purpose_aggregation_summary,
 )
 from safe.definitions.minimum_needs import minimum_needs_fields
+from safe.definitions.provenance import (
+    provenance_action_checklist,
+    provenance_aggregation_keywords,
+    provenance_aggregation_layer,
+    provenance_aggregation_layer_id,
+    provenance_analysis_extent,
+    provenance_analysis_question,
+    provenance_data_store_uri,
+    provenance_duration,
+    provenance_end_datetime,
+    provenance_exposure_keywords,
+    provenance_exposure_layer,
+    provenance_exposure_layer_id,
+    provenance_gdal_version,
+    provenance_hazard_keywords,
+    provenance_hazard_layer,
+    provenance_hazard_layer_id,
+    provenance_host_name,
+    provenance_impact_function_name,
+    provenance_impact_function_title,
+    provenance_inasafe_version,
+    provenance_map_legend_title,
+    provenance_map_title,
+    provenance_notes,
+    provenance_os,
+    provenance_pyqt_version,
+    provenance_qgis_version,
+    provenance_qt_version,
+    provenance_requested_extent,
+    provenance_start_datetime,
+    provenance_user,
+    provenance_layer_exposure_summary,
+    provenance_layer_aggregate_hazard_impacted,
+    provenance_layer_aggregation_summary,
+    provenance_layer_analysis_impacted,
+    provenance_layer_exposure_summary_table
+)
 from safe.definitions.utilities import definition
+from safe.impact_function.provenance_utilities import (
+    get_map_title,
+    get_analysis_question,
+)
+from safe.test.debug_helper import print_attribute_table
 from safe.test.utilities import (
     get_control_text,
     load_test_raster_layer,
@@ -40,13 +86,6 @@ from safe.test.utilities import (
     standard_data_path,
     load_test_vector_layer,
     compare_wkt
-)
-from safe.common.version import get_version
-from safe.test.debug_helper import print_attribute_table
-
-from safe.impact_function.provenance_utilities import (
-    get_map_title,
-    get_analysis_question,
 )
 
 QGIS_APP, CANVAS, IFACE, PARENT = get_qgis_app()
@@ -56,17 +95,18 @@ from qgis.core import (
     QgsRasterLayer,
     QgsMapLayer,
     QgsCoordinateReferenceSystem,
+    QgsGeometry,
     QGis)
 from osgeo import gdal
 from PyQt4.QtCore import QT_VERSION_STR
 from PyQt4.Qt import PYQT_VERSION_STR
-from safe.definitions.post_processors import (
-    post_processor_gender,
+from safe.processors import post_processor_size
+from safe.processors.population_post_processors import (
+    post_processor_female,
+    post_processor_male,
     post_processor_youth,
     post_processor_adult,
-    post_processor_elderly,
-    post_processor_size
-)
+    post_processor_elderly)
 from safe.definitions.constants import (
     PREPARE_SUCCESS,
     ANALYSIS_SUCCESS,
@@ -75,7 +115,9 @@ from safe.definitions.constants import (
 from safe.gis.sanity_check import check_inasafe_fields
 from safe.utilities.unicode import byteify
 from safe.utilities.gis import wkt_to_rectangle
+from safe.utilities.utilities import readable_os_version
 from safe.impact_function.impact_function import ImpactFunction
+from safe.impact_function.impact_function_utilities import check_input_layer
 
 LOGGER = logging.getLogger('InaSAFE')
 
@@ -108,7 +150,8 @@ def run_scenario(scenario, use_debug=False):
     :param use_debug: If we should use debug_mode when we run the scenario.
     :type use_debug: bool
 
-    :returns: Tuple(status, Flow dictionary, outputs).
+    :returns: Tuple(status, Flow dictionary, outputs, computed number of
+                outputs).
     :rtype: list
     """
     if os.path.exists(scenario['exposure']):
@@ -162,25 +205,52 @@ def run_scenario(scenario, use_debug=False):
     if aggregation_path:
         impact_function.aggregation = QgsVectorLayer(
             aggregation_path, 'Aggregation', 'ogr')
+    else:
+        impact_function.crs = QgsCoordinateReferenceSystem(4326)
 
     status, message = impact_function.prepare()
     if status != 0:
-        return status, message, None
+        raise Exception(message)
+
+    counts = len(impact_function.output_layers_expected())
 
     status, message = impact_function.run()
     if status != 0:
-        return status, message, None
+        raise Exception(message)
 
     for layer in impact_function.outputs:
         if layer.type() == QgsMapLayer.VectorLayer:
             check_inasafe_fields(layer)
 
-    return status, impact_function.state, impact_function.outputs
+    return (
+        status,
+        impact_function.state,
+        impact_function.outputs,
+        counts,
+        impact_function
+    )
 
 
 class TestImpactFunction(unittest.TestCase):
 
     """Test Impact Function."""
+
+    def assertEqualImpactFunction(self, first, second, msg=None):
+        """Special assert for impact function equality."""
+        if not isinstance(first, ImpactFunction):
+            message = (
+                'First object is not an ImpactFunction object, but a %s' %
+                type(second))
+            self.fail(self._formatMessage(msg, message))
+        if not isinstance(second, ImpactFunction):
+            message = (
+                'Second object is not an ImpactFunction object, but a %s' %
+                type(second))
+            self.fail(self._formatMessage(msg, message))
+
+        equal, message = first.is_equal(second)
+        if not equal:
+            self.fail(self._formatMessage('%s\n%s' % (msg, message), message))
 
     def test_keyword_monkey_patch(self):
         """Test behaviour of generating keywords."""
@@ -188,9 +258,7 @@ class TestImpactFunction(unittest.TestCase):
         # noinspection PyCallingNonCallable
         exposure_layer = QgsVectorLayer(exposure_path, 'Building', 'ogr')
 
-        impact_function = ImpactFunction()
-        impact_function.exposure = exposure_layer
-        impact_function._check_layer(impact_function.exposure, 'exposure')
+        check_input_layer(exposure_layer, 'exposure')
 
         expected_inasafe_fields = {
             exposure_type_field['key']: 'TYPE',
@@ -198,12 +266,13 @@ class TestImpactFunction(unittest.TestCase):
         self.assertDictEqual(
             exposure_layer.keywords['inasafe_fields'], expected_inasafe_fields)
 
-        fields = impact_function.exposure.dataProvider().fieldNameMap().keys()
+        fields = exposure_layer.dataProvider().fieldNameMap().keys()
         self.assertIn(
             exposure_layer.keywords['inasafe_fields']['exposure_type_field'],
             fields
         )
-        inasafe_fields = exposure_layer.keywords['inasafe_fields']
+        # We check that this key exists in the dictionary.
+        self.assertIn('inasafe_fields', exposure_layer.keywords.keys())
 
     def test_impact_function_behaviour(self):
         """Test behaviour of impact function."""
@@ -214,9 +283,21 @@ class TestImpactFunction(unittest.TestCase):
         impact_function = ImpactFunction()
         impact_function.exposure = exposure_layer
         impact_function.hazard = hazard_layer
+        impact_function.crs = QgsCoordinateReferenceSystem(4326)
         impact_function.prepare()
-        self.assertEqual(impact_function.name, 'Flood Polygon On Road Line')
+        self.assertEqual(impact_function.name, 'Flood Polygon On Roads Line')
         self.assertEqual(impact_function.title, 'be affected')
+
+        expected_layers = [
+            layer_purpose_exposure_summary['key'],
+            layer_purpose_aggregate_hazard_impacted['key'],
+            layer_purpose_aggregation_summary['key'],
+            layer_purpose_analysis_impacted['key'],
+            layer_purpose_exposure_summary_table['key'],
+            layer_purpose_profiling['key'],
+        ]
+        self.assertListEqual(
+            expected_layers, impact_function.output_layers_expected())
 
     def test_minimum_extent(self):
         """Test we can compute the minimum extent in the IF."""
@@ -227,6 +308,7 @@ class TestImpactFunction(unittest.TestCase):
         impact_function = ImpactFunction()
         impact_function.exposure = exposure_layer
         impact_function.hazard = hazard_layer
+        impact_function.crs = QgsCoordinateReferenceSystem(4326)
         status, message = impact_function.prepare()
         self.assertEqual(PREPARE_SUCCESS, status, message)
         message = (
@@ -259,8 +341,7 @@ class TestImpactFunction(unittest.TestCase):
             '106.885165 -6.237576, '
             '106.772279 -6.237576'
             '))')
-        impact_function.requested_extent_crs = QgsCoordinateReferenceSystem(
-            4326)
+        impact_function.crs = QgsCoordinateReferenceSystem(4326)
 
         status, message = impact_function.prepare()
         self.assertEqual(PREPARE_SUCCESS, status, message)
@@ -342,11 +423,21 @@ class TestImpactFunction(unittest.TestCase):
         impact_function = ImpactFunction()
         impact_function.exposure = exposure_layer
         impact_function.hazard = hazard_layer
+        impact_function.crs = QgsCoordinateReferenceSystem(4326)
         impact_function.prepare()
         # Let's remove one field from keywords.
         # We monkey patch keywords for testing after `prepare` & before `run`.
         fields = impact_function.exposure.keywords['inasafe_fields']
         del fields[female_count_field['key']]
+        expected_layers = [
+            layer_purpose_exposure_summary['key'],
+            layer_purpose_aggregate_hazard_impacted['key'],
+            layer_purpose_aggregation_summary['key'],
+            layer_purpose_analysis_impacted['key'],
+            layer_purpose_profiling['key'],
+        ]
+        self.assertListEqual(
+            expected_layers, impact_function.output_layers_expected())
         status, message = impact_function.run()
         self.assertEqual(ANALYSIS_SUCCESS, status, message)
 
@@ -357,7 +448,7 @@ class TestImpactFunction(unittest.TestCase):
             female_ratio_field['field_name'])
         self.assertNotEqual(-1, field)
         unique_ratio = impact.uniqueValues(field)
-        self.assertEqual(1, len(unique_ratio))
+        self.assertEqual(1, len(unique_ratio), unique_ratio)
         self.assertEqual(
             unique_ratio[0], female_ratio_default_value['default_value'])
 
@@ -392,18 +483,19 @@ class TestImpactFunction(unittest.TestCase):
             female_ratio_field['field_name'])
         self.assertNotEqual(-1, field)
         unique_ratio = impact.uniqueValues(field)
-        self.assertEqual(3, len(unique_ratio))
+        self.assertEqual(3, len(unique_ratio), unique_ratio)
 
         # We check the field exist after the IF with only one value.
         field = impact.fieldNameIndex(
             elderly_ratio_field['field_name'])
         self.assertNotEqual(-1, field)
         unique_ratio = impact.uniqueValues(field)
-        self.assertEqual(1, len(unique_ratio))
+        self.assertEqual(1, len(unique_ratio), unique_ratio)
         self.assertEqual(expected_ratio, unique_ratio[0])
 
         # Third test, if we provide an aggregation with a ratio and the
-        # exposure has a count.
+        # exposure has a count, we should a have a ratio from the exposure
+        # count.
         hazard_layer = load_test_vector_layer(
             'gisv4', 'hazard', 'classified_vector.geojson')
         exposure_layer = load_test_vector_layer(
@@ -423,13 +515,14 @@ class TestImpactFunction(unittest.TestCase):
 
         impact = impact_function.impact
 
-        # Check that we have only one unique value since the ratio for all
-        # female is the same
+        # Check that we have don't have only one unique value since the ratio
+        # depends on the "population / female count" and we should have at
+        # least different ratios.
         field = impact.fieldNameIndex(
             female_ratio_field['field_name'])
         self.assertNotEqual(-1, field)
         unique_ratio = impact.uniqueValues(field)
-        self.assertEqual(1, len(unique_ratio))
+        self.assertNotEqual(1, len(unique_ratio), unique_ratio)
 
     def test_ratios_with_raster_exposure(self):
         """Test if we can add defaults to a raster exposure.
@@ -446,7 +539,16 @@ class TestImpactFunction(unittest.TestCase):
         impact_function.debug_mode = True
         impact_function.exposure = exposure_layer
         impact_function.hazard = hazard_layer
+        impact_function.crs = QgsCoordinateReferenceSystem(4326)
         impact_function.prepare()
+        expected_layers = [
+            layer_purpose_aggregate_hazard_impacted['key'],
+            layer_purpose_aggregation_summary['key'],
+            layer_purpose_analysis_impacted['key'],
+            layer_purpose_profiling['key'],
+        ]
+        self.assertListEqual(
+            expected_layers, impact_function.output_layers_expected())
         status, message = impact_function.run()
         self.assertEqual(ANALYSIS_SUCCESS, status, message)
 
@@ -576,10 +678,10 @@ class TestImpactFunction(unittest.TestCase):
         # test_provenance pass
         del hazard_layer
 
-    def test_scenario(self, scenario_path=None):
+    def test_scenario(
+            self, scenario_path=None, use_debug=True, test_loader=False):
         """Run test single scenario."""
         self.maxDiff = None
-        use_debug = True
 
         if not scenario_path:
             scenario_path = standard_data_path(
@@ -589,16 +691,34 @@ class TestImpactFunction(unittest.TestCase):
         LOGGER.info('Running the scenario : %s' % scenario_path)
         scenario, expected_steps, expected_outputs = read_json_flow(
             scenario_path)
-        status, steps, outputs = run_scenario(scenario, use_debug)
+        status, steps, outputs, computed_nb_outputs, impact_function = (
+            run_scenario(scenario, use_debug))
         self.assertEqual(0, status, steps)
         # self.assertDictEqual(expected_steps, steps, scenario_path)
         try:
             self.assertDictEqual(byteify(expected_steps), byteify(steps))
-        except AssertionError as e:
-            raise AssertionError(e.message + '\nThe file is ' + scenario_path)
+        except AssertionError:
+            LOGGER.info('Exception found in ' + scenario_path)
+            raise
         # - 1 because I added the profiling table, and this table is not
         # counted in the JSON file.
         self.assertEqual(len(outputs) - 1, expected_outputs['count'])
+        self.assertEqual(len(outputs), computed_nb_outputs)
+        self.assertEqual(
+            impact_function.crs.authid(),
+            impact_function.impact.crs().authid())
+
+        # Test deserialization
+        if test_loader:
+            LOGGER.debug('Test deserialization.')
+            output_metadata = impact_function.impact.keywords
+            new_impact_function = ImpactFunction. \
+                load_from_output_metadata(output_metadata)
+            message = "Exception found in " + scenario_path
+            self.assertEqualImpactFunction(
+                impact_function, new_impact_function, message)
+
+        return impact_function
 
     @unittest.skipIf(
         os.environ.get('ON_TRAVIS', False),
@@ -613,6 +733,8 @@ class TestImpactFunction(unittest.TestCase):
         """
         scenarios = {
             'earthquake_raster_on_raster_population': False,
+            'earthquake_raster_on_vector_places': False,
+            'earthquake_raster_on_vector_population': False,
             'polygon_classified_on_line': False,
             'polygon_classified_on_point': False,
             'polygon_classified_on_vector_population': False,
@@ -629,11 +751,16 @@ class TestImpactFunction(unittest.TestCase):
 
         # If we want to invert the selection.
         invert = False
+        # If we want to also test the IF loader / deserialization.
+        test_loader = False
 
         path = standard_data_path('scenario')
-        for scenario, enabled in scenarios.iteritems():
+        # Sort it to make it easy to debug
+        for scenario in sorted(scenarios.keys()):
+            enabled = scenarios[scenario]
             if (not invert and enabled) or (invert and not enabled):
-                self.test_scenario(join(path, scenario + '.json'))
+                self.test_scenario(
+                    join(path, scenario + '.json'), test_loader=test_loader)
 
         json_files = [
             join(path, f) for f in listdir(path)
@@ -657,9 +784,40 @@ class TestImpactFunction(unittest.TestCase):
             if scenario.get('enable', True):
                 print "Test JSON scenario : "
                 print json_file
-                self.test_scenario(json_file)
+                self.test_scenario(json_file, test_loader=True)
                 count += 1
         self.assertEqual(len(json_files), count)
+
+    def test_old_fields_keywords(self):
+        """The IF is not ready with we have some wrong inasafe_fields."""
+        hazard_layer = load_test_vector_layer(
+            'gisv4', 'hazard', 'classified_vector.geojson')
+        exposure_layer = load_test_vector_layer(
+            'gisv4', 'exposure', 'building-points.geojson',
+            clone=True)
+        aggregation_layer = load_test_vector_layer(
+            'gisv4', 'aggregation', 'small_grid.geojson')
+
+        impact_function = ImpactFunction()
+        impact_function.aggregation = aggregation_layer
+        impact_function.exposure = exposure_layer
+        impact_function.hazard = hazard_layer
+        status, message = impact_function.prepare()
+
+        # The layer should be fine.
+        self.assertEqual(PREPARE_SUCCESS, status, message)
+
+        # Now, we remove one field
+        exposure_layer.startEditing()
+        field = exposure_layer.keywords['inasafe_fields'].values()[0]
+        index = exposure_layer.fieldNameIndex(field)
+        exposure_layer.deleteAttribute(index)
+        exposure_layer.commitChanges()
+
+        # It shouldn't be fine as we removed one field which
+        # was in inasafe_fields
+        status, message = impact_function.prepare()
+        self.assertNotEqual(PREPARE_SUCCESS, status, message)
 
     def test_post_processor(self):
         """Test for running post processor."""
@@ -694,7 +852,8 @@ class TestImpactFunction(unittest.TestCase):
 
         used_post_processors = [
             post_processor_size,
-            post_processor_gender,
+            post_processor_male,
+            post_processor_female,
             post_processor_youth,
             post_processor_adult,
             post_processor_elderly,
@@ -723,26 +882,37 @@ class TestImpactFunction(unittest.TestCase):
         hazard_category = definition(hazard_layer.keywords['hazard_category'])
 
         expected_provenance = {
-            'gdal_version': gdal.__version__,
-            'host_name': gethostname(),
-            'map_title': get_map_title(hazard, exposure, hazard_category),
-            'map_legend_title': exposure['layer_legend_title'],
-            'user': getpass.getuser(),
-            'os': platform.version(),
-            'pyqt_version': PYQT_VERSION_STR,
-            'qgis_version': QGis.QGIS_VERSION,
-            'qt_version': QT_VERSION_STR,
-            'inasafe_version': get_version(),
-            'aggregation_layer': aggregation_layer.source(),
-            'aggregation_layer_id': aggregation_layer.id(),
-            'exposure_layer': exposure_layer.source(),
-            'exposure_layer_id': exposure_layer.id(),
-            'hazard_layer': hazard_layer.source(),
-            'hazard_layer_id': hazard_layer.id(),
-            'analysis_question': get_analysis_question(hazard, exposure),
-            'aggregation_keywords': deepcopy(aggregation_layer.keywords),
-            'exposure_keywords': deepcopy(exposure_layer.keywords),
-            'hazard_keywords': deepcopy(hazard_layer.keywords),
+            provenance_gdal_version['provenance_key']: gdal.__version__,
+            provenance_host_name['provenance_key']: gethostname(),
+            provenance_map_title['provenance_key']: get_map_title(
+                hazard, exposure, hazard_category),
+            provenance_map_legend_title['provenance_key']: exposure[
+                'layer_legend_title'],
+            provenance_user['provenance_key']: getpass.getuser(),
+            provenance_os['provenance_key']: readable_os_version(),
+            provenance_pyqt_version['provenance_key']: PYQT_VERSION_STR,
+            provenance_qgis_version['provenance_key']: QGis.QGIS_VERSION,
+            provenance_qt_version['provenance_key']: QT_VERSION_STR,
+            provenance_inasafe_version['provenance_key']: get_version(),
+            provenance_aggregation_layer['provenance_key']:
+                aggregation_layer.source() + '|qgis_provider=ogr',
+            provenance_aggregation_layer_id['provenance_key']:
+                aggregation_layer.id(),
+            provenance_exposure_layer['provenance_key']:
+                exposure_layer.source() + '|qgis_provider=ogr',
+            provenance_exposure_layer_id['provenance_key']:
+                exposure_layer.id(),
+            provenance_hazard_layer['provenance_key']:
+                hazard_layer.source() + '|qgis_provider=ogr',
+            provenance_hazard_layer_id['provenance_key']: hazard_layer.id(),
+            provenance_analysis_question['provenance_key']:
+                get_analysis_question(hazard, exposure),
+            provenance_aggregation_keywords['provenance_key']: deepcopy(
+                aggregation_layer.keywords),
+            provenance_exposure_keywords['provenance_key']:
+                deepcopy(exposure_layer.keywords),
+            provenance_hazard_keywords['provenance_key']: deepcopy(
+                hazard_layer.keywords),
         }
 
         # Set up impact function
@@ -760,17 +930,39 @@ class TestImpactFunction(unittest.TestCase):
         self.maxDiff = None
 
         expected_provenance.update({
-            'action_checklist': impact_function.action_checklist(),
-            'analysis_extent': impact_function.analysis_extent.exportToWkt(),
-            'impact_function_name': impact_function.name,
-            'impact_function_title': impact_function.title,
-            'notes': impact_function.notes(),
-            'requested_extent': impact_function.requested_extent,
-            'data_store_uri': impact_function.datastore.uri_path,
-            'datetime': impact_function.datetime,
+            provenance_action_checklist['provenance_key']:
+                impact_function.action_checklist(),
+            provenance_analysis_extent['provenance_key']:
+                impact_function.analysis_extent.exportToWkt(),
+            provenance_impact_function_name['provenance_key']:
+                impact_function.name,
+            provenance_impact_function_title['provenance_key']:
+                impact_function.title,
+            provenance_notes['provenance_key']: impact_function.notes(),
+            provenance_requested_extent['provenance_key']: impact_function.
+                requested_extent,
+            provenance_data_store_uri['provenance_key']: impact_function.
+                datastore.uri_path,
+            provenance_start_datetime['provenance_key']: impact_function.
+                start_datetime,
+            provenance_end_datetime['provenance_key']:
+                impact_function.end_datetime,
+            provenance_duration['provenance_key']: impact_function.duration
         })
 
-        self.assertDictEqual(expected_provenance, impact_function.provenance)
+        self.assertDictContainsSubset(
+            expected_provenance, impact_function.provenance)
+
+        output_layer_provenance_keys = [
+            provenance_layer_exposure_summary['provenance_key'],
+            provenance_layer_aggregate_hazard_impacted['provenance_key'],
+            provenance_layer_aggregation_summary['provenance_key'],
+            provenance_layer_analysis_impacted['provenance_key'],
+            provenance_layer_exposure_summary_table['provenance_key']
+        ]
+
+        for key in output_layer_provenance_keys:
+            self.assertIn(key, impact_function.provenance.keys())
 
         # Future reference: I comment out these lines since the keywords
         # properties are used in the report generation. Removing it will make
@@ -802,32 +994,41 @@ class TestImpactFunction(unittest.TestCase):
         hazard_category = definition(hazard_layer.keywords['hazard_category'])
 
         expected_provenance = {
-            'gdal_version': gdal.__version__,
-            'host_name': gethostname(),
-            'map_title': get_map_title(hazard, exposure, hazard_category),
-            'map_legend_title': exposure['layer_legend_title'],
-            'inasafe_version': get_version(),
-            'pyqt_version': PYQT_VERSION_STR,
-            'qgis_version': QGis.QGIS_VERSION,
-            'qt_version': QT_VERSION_STR,
-            'user': getpass.getuser(),
-            'os': platform.version(),
-            'aggregation_layer': None,
-            'aggregation_layer_id': None,
-            'exposure_layer': exposure_layer.source(),
-            'exposure_layer_id': exposure_layer.id(),
-            'hazard_layer': hazard_layer.source(),
-            'hazard_layer_id': hazard_layer.id(),
-            'analysis_question': get_analysis_question(hazard, exposure),
-            'aggregation_keywords': None,
-            'exposure_keywords': deepcopy(exposure_layer.keywords),
-            'hazard_keywords': deepcopy(hazard_layer.keywords),
+            provenance_gdal_version['provenance_key']: gdal.__version__,
+            provenance_host_name['provenance_key']: gethostname(),
+            provenance_map_title['provenance_key']: get_map_title(
+                hazard, exposure, hazard_category),
+            provenance_map_legend_title['provenance_key']: exposure[
+                'layer_legend_title'],
+            provenance_user['provenance_key']: getpass.getuser(),
+            provenance_os['provenance_key']: readable_os_version(),
+            provenance_pyqt_version['provenance_key']: PYQT_VERSION_STR,
+            provenance_qgis_version['provenance_key']: QGis.QGIS_VERSION,
+            provenance_qt_version['provenance_key']: QT_VERSION_STR,
+            provenance_inasafe_version['provenance_key']: get_version(),
+            provenance_aggregation_layer['provenance_key']: None,
+            provenance_aggregation_layer_id['provenance_key']: None,
+            provenance_exposure_layer['provenance_key']:
+                exposure_layer.source() + '|qgis_provider=ogr',
+            provenance_exposure_layer_id['provenance_key']:
+                exposure_layer.id(),
+            provenance_hazard_layer['provenance_key']:
+                hazard_layer.source() + '|qgis_provider=ogr',
+            provenance_hazard_layer_id['provenance_key']: hazard_layer.id(),
+            provenance_analysis_question['provenance_key']:
+                get_analysis_question(hazard, exposure),
+            provenance_aggregation_keywords['provenance_key']: None,
+            provenance_exposure_keywords['provenance_key']:
+                deepcopy(exposure_layer.keywords),
+            provenance_hazard_keywords['provenance_key']: deepcopy(
+                hazard_layer.keywords),
         }
 
         # Set up impact function
         impact_function = ImpactFunction()
         impact_function.exposure = exposure_layer
         impact_function.hazard = hazard_layer
+        impact_function.crs = QgsCoordinateReferenceSystem(4326)
         status, message = impact_function.prepare()
         self.assertEqual(PREPARE_SUCCESS, status, message)
         status, message = impact_function.run()
@@ -836,17 +1037,39 @@ class TestImpactFunction(unittest.TestCase):
         self.maxDiff = None
 
         expected_provenance.update({
-            'action_checklist': impact_function.action_checklist(),
-            'analysis_extent': impact_function.analysis_extent.exportToWkt(),
-            'impact_function_name': impact_function.name,
-            'impact_function_title': impact_function.title,
-            'notes': impact_function.notes(),
-            'requested_extent': impact_function.requested_extent,
-            'data_store_uri': impact_function.datastore.uri_path,
-            'datetime': impact_function.datetime,
+            provenance_action_checklist['provenance_key']:
+                impact_function.action_checklist(),
+            provenance_analysis_extent['provenance_key']:
+                impact_function.analysis_extent.exportToWkt(),
+            provenance_impact_function_name['provenance_key']:
+                impact_function.name,
+            provenance_impact_function_title['provenance_key']:
+                impact_function.title,
+            provenance_notes['provenance_key']: impact_function.notes(),
+            provenance_requested_extent['provenance_key']: impact_function.
+                requested_extent,
+            provenance_data_store_uri['provenance_key']: impact_function.
+                datastore.uri_path,
+            provenance_start_datetime['provenance_key']: impact_function.
+                start_datetime,
+            provenance_end_datetime['provenance_key']:
+                impact_function.end_datetime,
+            provenance_duration['provenance_key']: impact_function.duration
         })
 
-        self.assertDictEqual(expected_provenance, impact_function.provenance)
+        self.assertDictContainsSubset(
+            expected_provenance, impact_function.provenance)
+
+        output_layer_provenance_keys = [
+            provenance_layer_exposure_summary['provenance_key'],
+            provenance_layer_aggregate_hazard_impacted['provenance_key'],
+            provenance_layer_aggregation_summary['provenance_key'],
+            provenance_layer_analysis_impacted['provenance_key'],
+            provenance_layer_exposure_summary_table['provenance_key']
+        ]
+
+        for key in output_layer_provenance_keys:
+            self.assertIn(key, impact_function.provenance.keys())
 
     def test_vector_post_minimum_needs_value_generation(self):
         """Test minimum needs postprocessors on vector exposure.
@@ -879,11 +1102,11 @@ class TestImpactFunction(unittest.TestCase):
         expected_value = {
             u'population': 69,
             u'total': 9.0,
-            u'minimum_needs__rice': 239,
-            u'minimum_needs__clean_water': 5733,
-            u'minimum_needs__toilets': 4,
-            u'minimum_needs__drinking_water': 1497,
-            u'minimum_needs__family_kits': 17,
+            u'minimum_needs__rice': 491,
+            u'minimum_needs__clean_water': 11763,
+            u'minimum_needs__toilets': 8,
+            u'minimum_needs__drinking_water': 3072,
+            u'minimum_needs__family_kits': 35,
             u'male': 34,
             u'female': 34,
             u'youth': 17,
@@ -920,6 +1143,7 @@ class TestImpactFunction(unittest.TestCase):
         impact_function = ImpactFunction()
         impact_function.exposure = exposure_layer
         impact_function.hazard = hazard_layer
+        impact_function.crs = QgsCoordinateReferenceSystem(4326)
         impact_function.prepare()
         return_code, message = impact_function.run()
 
@@ -974,6 +1198,52 @@ class TestImpactFunction(unittest.TestCase):
                     field['key'],
                     inasafe_fields,
                     message.format(field_key=field['key']))
+
+    def test_equality(self):
+        """Testing IF equal operator."""
+        new_impact_function = ImpactFunction()
+        self.assertEqualImpactFunction(
+            new_impact_function, new_impact_function)
+
+    @unittest.skipIf(
+        not os.path.exists('/Users/ismailsunni/dev/python/inasafe-dev'),
+        'The path is not absolute from the output layer metadata.')
+    def test_load_from_metadata(self):
+        """Test load from metadata."""
+        analysis_summary = load_test_vector_layer(
+            'output',
+            'FloodRasterOnLandCoverPolygon_13October2017_13h16-20.167673',
+            'analysis_summary.geojson')
+        self.assertEqual(
+            analysis_summary.keywords['layer_purpose'],
+            layer_purpose_analysis_impacted['key'])
+        output_metadata = analysis_summary.keywords
+        impact_function = ImpactFunction.load_from_output_metadata(
+            output_metadata)
+        self.assertIsNotNone(impact_function.exposure)
+        self.assertIsNotNone(impact_function.hazard)
+        self.assertIsNotNone(impact_function.aggregation)
+        self.assertIsNone(impact_function.requested_extent)
+        self.assertIsInstance(impact_function.analysis_extent, QgsGeometry)
+        self.assertIsInstance(impact_function.datastore, DataStore)
+        self.assertIsInstance(impact_function.start_datetime, datetime)
+        self.assertIsInstance(impact_function.end_datetime, datetime)
+        self.assertLess(0, impact_function.duration)
+        self.assertIsNone(impact_function.earthquake_function)
+        # Output layers
+        self.assertIsInstance(impact_function.exposure_summary, QgsVectorLayer)
+        self.assertIsInstance(
+            impact_function.aggregate_hazard_impacted, QgsVectorLayer)
+        self.assertIsInstance(
+            impact_function.aggregation_summary, QgsVectorLayer)
+        self.assertIsInstance(
+            impact_function.analysis_impacted, QgsVectorLayer)
+        self.assertIsInstance(
+            impact_function.exposure_summary_table, QgsVectorLayer)
+        self.assertIsInstance(impact_function.profiling, QgsVectorLayer)
+        self.assertIsInstance(impact_function.impact, QgsVectorLayer)
+        self.assertEquals(len(impact_function.outputs), 6)
+
 
 
 if __name__ == '__main__':

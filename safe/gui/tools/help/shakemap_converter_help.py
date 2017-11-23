@@ -1,11 +1,10 @@
 # coding=utf-8
 """Help text for shakemap convertor."""
 
-from safe.utilities.i18n import tr
 from safe import messaging as m
 from safe.messaging import styles
+from safe.utilities.i18n import tr
 from safe.utilities.resources import resources_path
-
 
 SUBSECTION_STYLE = styles.SUBSECTION_LEVEL_3_STYLE
 
@@ -65,7 +64,7 @@ def content():
     message.add(paragraph)
     body = tr(
         'This tool will convert an earthquake \'shakemap\' that is in '
-        'grid xml format to a GeoTIFF file. The imported file can be used '
+        'grid xml format into a GeoTIFF file. The imported file can be used '
         'in InaSAFE as an input for impact functions that require an '
         'earthquake layer.  To use this tool effectively:')
     message.add(body)

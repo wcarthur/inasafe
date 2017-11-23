@@ -2,9 +2,9 @@
 
 """Clip a raster by bounding box."""
 
-import processing
 import logging
 
+import processing
 from qgis.core import QgsRasterLayer
 
 from safe.common.exceptions import ProcessingInstallationError
@@ -45,10 +45,11 @@ def clip_by_extent(layer, extent, callback=None):
 
     .. versionadded:: 4.0
     """
+    parameters = dict()
     # noinspection PyBroadException
     try:
         output_layer_name = quick_clip_steps['output_layer_name']
-        processing_step = quick_clip_steps['step_name']
+        processing_step = quick_clip_steps['step_name']  # NOQA
         output_layer_name = output_layer_name % layer.keywords['layer_purpose']
 
         output_raster = unique_filename(dir=temp_dir())
@@ -81,7 +82,6 @@ def clip_by_extent(layer, extent, callback=None):
         # https://github.com/qgis/QGIS/blob/master/python/plugins/processing/
         # algs/gdal/ClipByExtent.py
         # Please read the file to know these parameters.
-        parameters = dict()
         parameters['INPUT'] = layer.source()
         parameters['NO_DATA'] = ''
         parameters['PROJWIN'] = ','.join(bbox)

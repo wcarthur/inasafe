@@ -1,35 +1,50 @@
 # coding=utf-8
 """Help text for the dock widget."""
 
-from os.path import exists
 import copy
 import logging
+import re
+from os.path import exists
+
 from PyQt4 import QtCore
-from safe.utilities.i18n import tr
-from safe import messaging as m
-from safe.messaging import styles
+
 import safe.definitions as definitions
+import safe.processors
+from safe import messaging as m
+from safe.definitions.earthquake import current_earthquake_model_name
 from safe.definitions.exposure import exposure_all
+from safe.definitions.field_groups import (
+    population_field_groups, aggregation_field_groups)
+from safe.definitions.hazard_classifications import hazard_classification_type
 from safe.definitions.hazard_exposure_specifications import (
     specific_notes, specific_actions)
-from safe.definitions.field_groups import (
-    exposure_field_groups, aggregation_field_groups)
+from safe.definitions.reports.infographic import html_frame_elements
+from safe.definitions.reports.report_descriptions import all_reports
+from safe.gui.tools.help.batch_help import content as batch_help
+from safe.gui.tools.help.developer_help import content as developer_help
 from safe.gui.tools.help.dock_help import content as dock_help
 from safe.gui.tools.help.extent_selector_help import content as extent_help
+from safe.gui.tools.help.field_mapping_help import content as \
+    field_mapping_tool_help
 from safe.gui.tools.help.impact_report_help import content as report_help
+from safe.gui.tools.help.multi_buffer_help import content as multi_buffer_help
 from safe.gui.tools.help.needs_calculator_help import content as needs_help
-from safe.gui.tools.help.batch_help import content as batch_help
 from safe.gui.tools.help.needs_manager_help import content as \
     needs_manager_help
 from safe.gui.tools.help.options_help import content as options_help
-from safe.gui.tools.help.field_mapping_help import content as \
-    field_mapping_tool_help
 from safe.gui.tools.help.osm_downloader_help import content as osm_help
 from safe.gui.tools.help.peta_bencana_help import content as petabencana_help
 from safe.gui.tools.help.shakemap_converter_help \
     import content as shakemap_help
-from safe.gui.tools.help.multi_buffer_help import content as multi_buffer_help
+from safe.messaging import styles
+from safe.processors import (
+    post_processor_input_types,
+    post_processor_input_values)
+from safe.utilities.expressions import qgis_expressions
+from safe.utilities.i18n import tr
 from safe.utilities.resources import resource_url, resources_path
+from safe.utilities.rounding import html_scientific_notation_rate
+
 LOGGER = logging.getLogger('InaSAFE')
 # For chapter sections
 # Items marked as numbered below will show section numbering in HTML render
@@ -52,10 +67,10 @@ HEADING_LOOKUPS = {
 }
 HEADING_COUNTS = {
     1: 1,
-    2: 1,
-    3: 1,
-    4: 1,
-    5: 1,
+    2: 0,
+    3: 0,
+    4: 0,
+    5: 0,
 }
 
 __copyright__ = "Copyright 2016, The InaSAFE Project"
@@ -72,7 +87,6 @@ def definitions_help():
     :returns: A message object containing helpful information.
     :rtype: messaging.message.Message
     """
-
     message = m.Message()
     message.add(m.Brand())
     message.add(heading())
@@ -276,7 +290,7 @@ def content():
         message,
         table_of_contents,
         'field-mapping-tool',
-        tr('The Field MappingTool'),
+        tr('The Field Mapping Tool'),
         heading_level=2)
     message.add(field_mapping_tool_help())
 
@@ -290,7 +304,7 @@ def content():
         'The following demographic groups apply only to vector population '
         'exposure layers:'
     ))
-    for group in exposure_field_groups:
+    for group in population_field_groups:
         definition_to_message(
             group, message, table_of_contents, heading_level=4)
 
@@ -659,7 +673,7 @@ def content():
         tr('Post Processor Input Types'),
         heading_level=2)
     table = _create_post_processor_subtable(
-        definitions.post_processor_input_types
+        post_processor_input_types
     )
     message.add(table)
 
@@ -670,7 +684,7 @@ def content():
         tr('Post Processor Input Values'),
         heading_level=2)
     table = _create_post_processor_subtable(
-        definitions.post_processor_input_values
+        post_processor_input_values
     )
     message.add(table)
 
@@ -681,7 +695,7 @@ def content():
         tr('Post Processor Process Types'),
         heading_level=2)
     table = _create_post_processor_subtable(
-        definitions.post_processor_process_types
+        safe.processors.post_processor_process_types
     )
     message.add(table)
 
@@ -691,7 +705,7 @@ def content():
         'post-processors',
         tr('Post Processors'),
         heading_level=2)
-    post_processors = definitions.post_processors
+    post_processors = safe.processors.post_processors
     table = m.Table(style_class='table table-condensed table-striped')
     row = m.Row()
     row.add(m.Cell(tr('Name'), header=True))
@@ -703,12 +717,12 @@ def content():
         row.add(m.Cell(post_processor['name']))
         # Input fields
         bullets = m.BulletedList()
-        for key, value in post_processor['input'].iteritems():
+        for key, value in sorted(post_processor['input'].iteritems()):
             bullets.add(key)
         row.add(m.Cell(bullets))
         # Output fields
         bullets = m.BulletedList()
-        for key, value in post_processor['output'].iteritems():
+        for key, value in sorted(post_processor['output'].iteritems()):
             name = value['value']['name']
             formula_type = value['type']['key']
             if formula_type == 'formula':
@@ -731,6 +745,128 @@ def content():
         row.add(m.Cell(post_processor['description'], span=2))
         table.add(row)
     message.add(table)
+
+    ##
+    # Reporting
+    ##
+    _create_section_header(
+        message,
+        table_of_contents,
+        'reporting',
+        tr('Reporting'),
+        heading_level=1)
+
+    paragraph = m.Paragraph(
+        m.ImportantText(tr('Note: ')),
+        m.Text(tr(
+            'This section of the help documentation is intended for advanced '
+            'users who want to modify reports which are produced by InaSAFE.'
+        )))
+    message.add(paragraph)
+    _create_section_header(
+        message,
+        table_of_contents,
+        'reporting-overview',
+        tr('Overview'),
+        heading_level=2)
+    message.add(m.Paragraph(tr(
+        'Whenever InaSAFE completes an analysis, it will automatically '
+        'generate a number of reports. Some of these reports are based on '
+        'templates that are shipped with InaSAFE, and can be customised or '
+        'over-ridden by creating your own templates. The following '
+        'reports are produced in InaSAFE:'
+    )))
+    table = m.Table(style_class='table table-condensed table-striped')
+    row = m.Row()
+    row.add(m.Cell(tr('Name'), header=True))
+    row.add(m.Cell(tr('Customisable?'), header=True))
+    row.add(m.Cell(tr('Example'), header=True))
+    row.add(m.Cell(tr('Description'), header=True))
+    table.add(row)
+
+    for report in all_reports:
+        row = m.Row()
+        row.add(m.Cell(report['name']))
+        if report['customisable']:
+            row.add(m.Cell(tr('Yes')))
+        else:
+            row.add(m.Cell(tr('No')))
+        png_image_path = resources_path(
+            'img', 'screenshots', report['thumbnail'])
+        row.add(m.Image(png_image_path, style_class='text-center'))
+        row.add(m.Cell(report['description']))
+        table.add(row)
+
+    message.add(table)
+
+    message.add(m.Paragraph(tr(
+        'In the sections that follow, we provide more technical information '
+        'about the custom QGIS Expressions and special template elements '
+        'that can be used to customise your templates.'
+    )))
+
+    _create_section_header(
+        message,
+        table_of_contents,
+        'reporting-expressions',
+        tr('QGIS Expressions'),
+        heading_level=2)
+    message.add(m.Paragraph(tr(
+        'InaSAFE adds a number of expressions that can be used to '
+        'conveniently obtain provenance data to the active analysis results. '
+        'The expressions can also be used elsewhere in QGIS as needed.'
+        '.'
+    )))
+
+    table = m.Table(style_class='table table-condensed table-striped')
+    row = m.Row()
+    row.add(m.Cell(tr('Name'), header=True))
+    row.add(m.Cell(tr('Description'), header=True))
+    table.add(row)
+    for expression_name, expression in sorted(qgis_expressions().iteritems()):
+        row = m.Row()
+        row.add(m.Cell(expression_name))
+        help = expression.helptext()
+        # This pattern comes from python/qgis/core/__init__.py ≈ L79
+        pattern = r'<h3>(.*) function</h3><br>'
+        help = re.sub(pattern, '', help)
+        help = re.sub(r'\n', '<br>', help)
+        row.add(m.Cell(help))
+        table.add(row)
+    message.add(table)
+
+    _create_section_header(
+        message,
+        table_of_contents,
+        'reporting-composer-elements',
+        tr('Composer Elements'),
+        heading_level=2)
+    message.add(m.Paragraph(tr(
+        'InaSAFE looks for elements with specific id\'s on the composer '
+        'page and replaces them with InaSAFE specific content.'
+    )))
+    table = m.Table(style_class='table table-condensed table-striped')
+    row = m.Row()
+    row.add(m.Cell(tr('ID'), header=True))
+    row.add(m.Cell(tr('Description'), header=True))
+    table.add(row)
+    for item in html_frame_elements:
+        row = m.Row()
+        row.add(m.Cell(item['id']))
+        row.add(m.Cell(item['description']))
+        table.add(row)
+    message.add(table)
+
+    ##
+    # Developer documentation
+    ##
+    _create_section_header(
+        message,
+        table_of_contents,
+        'developer-guide',
+        tr('Developer Guide'),
+        heading_level=1)
+    message.add(developer_help())
 
     # Finally we add the table of contents at the top
     full_message = m.Message()
@@ -758,13 +894,13 @@ def _start_glossary_table(group):
 def _create_section_header(
         message,
         table_of_contents,
-        id,
+        element_id,
         text,
         heading_level=1):
     # Warning a side effect here is that the SECTION_STYLE is updated
     # when setting style as we modify the id so we have to make a deep copy
     style = copy.deepcopy(HEADING_LOOKUPS[heading_level])
-    style['element_id'] = id
+    style['element_id'] = element_id
 
     HEADING_COUNTS[heading_level] += 1
     # Reset the heading counts for headings below this level
@@ -772,12 +908,12 @@ def _create_section_header(
     index_number = ''
     for key in HEADING_COUNTS.keys():
         if key > heading_level:
-            HEADING_COUNTS[key] = 1
+            HEADING_COUNTS[key] = 0
         else:
             index_number += str(HEADING_COUNTS[key]) + '.'
 
     header = m.Heading(text, **style)
-    link = m.Link('#%s' % id, index_number + ' ' + text)
+    link = m.Link('#%s' % element_id, index_number + ' ' + text)
     # See bootstrap docs for ml-1 explanation
     # https://v4-alpha.getbootstrap.com/utilities/spacing/#examples
     paragraph = m.Paragraph(
@@ -822,11 +958,11 @@ def definition_to_message(
     :type definition: dict
 
     :param message: The message that the definition should be appended to.
-    :type message: safe_extras.parameters.message.Message
+    :type message: parameters.message.Message
 
     :param table_of_contents: Table of contents that the headings should be
         included in.
-    :type message: safe_extras.parameters.message.Message
+    :type message: parameters.message.Message
 
     :param heading_level: Optional style to apply to the definition
         heading. See HEADING_LOOKUPS
@@ -857,17 +993,9 @@ def definition_to_message(
     # side in a table otherwise just show the description as a paragraph
     url = _definition_icon_url(definition)
     if url is None:
-        LOGGER.info('No URL for definition icon')
         message.add(m.Paragraph(definition['description']))
         if 'citations' in definition:
-            for citation in definition['citations']:
-                if citation['text'] in [None, '']:
-                    continue
-                if citation['link'] in [None, '']:
-                    message.add(m.Paragraph(citation['text']))
-                else:
-                    message.add(m.Paragraph(
-                        m.Link(citation['link'], citation['text'])))
+            _citations_to_message(message, definition)
     else:
         LOGGER.info('Creating mini table for definition description: ' + url)
         table = m.Table(style_class='table table-condensed')
@@ -917,15 +1045,31 @@ def definition_to_message(
             elif note:
                 bullets.add(m.Text(note))
         message.add(bullets)
+        if 'citations' in definition:
+            _citations_to_message(message, definition)
 
     # This only for EQ
     if 'earthquake_fatality_models' in definition:
-        for model in definition['earthquake_fatality_models']:
+        current_function = current_earthquake_model_name()
+        paragraph = m.Paragraph(tr(
+            'The following earthquake fatality models are available in '
+            'InaSAFE. Note that you need to set one of these as the '
+            'active model in InaSAFE Options. The currently active model '
+            'is: '),
+            m.ImportantText(current_function)
+        )
+        message.add(paragraph)
+
+        models_definition = definition['earthquake_fatality_models']
+        for model in models_definition:
             message.add(m.Heading(model['name'], **DETAILS_SUBGROUP_STYLE))
-            bullets = m.BulletedList()
+            if 'description' in model:
+                paragraph = m.Paragraph(model['description'])
+                message.add(paragraph)
             for note in model['notes']:
-                bullets.add(m.Text(note))
-                message.add(bullets)
+                paragraph = m.Paragraph(note)
+                message.add(paragraph)
+            _citations_to_message(message, model)
 
     for exposure in exposure_all:
         extra_exposure_notes = specific_notes(definition, exposure)
@@ -1053,36 +1197,50 @@ def definition_to_message(
 
     if 'classes' in definition:
         message.add(m.Paragraph(m.ImportantText(tr('Classes:'))))
-        table = _make_defaults_table()
+        is_hazard = definition['type'] == hazard_classification_type
+        if is_hazard:
+            table = _make_defaults_hazard_table()
+        else:
+            table = _make_defaults_exposure_table()
+
         for inasafe_class in definition['classes']:
             row = m.Row()
-            # name() on QColor returns its hex code
-            if 'color' in inasafe_class:
-                colour = inasafe_class['color'].name()
-                row.add(m.Cell(
-                    u'', attributes='style="background: %s;"' % colour))
-            else:
-                row.add(m.Cell(u' '))
+            if is_hazard:
+                # name() on QColor returns its hex code
+                if 'color' in inasafe_class:
+                    colour = inasafe_class['color'].name()
+                    row.add(m.Cell(
+                        u'', attributes='style="background: %s;"' % colour))
+                else:
+                    row.add(m.Cell(u' '))
 
             row.add(m.Cell(inasafe_class['name']))
-            if 'affected' in inasafe_class:
-                row.add(m.Cell(tr(inasafe_class['affected'])))
-            else:
-                row.add(m.Cell(tr('unspecified')))
 
-            if inasafe_class.get('fatality_rate') >= 0:
-                rate = inasafe_class['fatality_rate'] * 100
-                rate = u'%s%%' % rate
-                row.add(m.Cell(rate))
-            else:
-                row.add(m.Cell(tr('unspecified')))
+            if is_hazard:
+                if 'affected' in inasafe_class:
+                    row.add(m.Cell(tr(inasafe_class['affected'])))
+                else:
+                    row.add(m.Cell(tr('unspecified')))
 
-            if 'displacement_rate' in inasafe_class:
-                rate = inasafe_class['displacement_rate'] * 100
-                rate = u'%s%%' % rate
-                row.add(m.Cell(rate))
-            else:
-                row.add(m.Cell(tr('unspecified')))
+            if is_hazard:
+                if inasafe_class.get('fatality_rate') > 0:
+                    # we want to show the rate as a scientific notation
+                    rate = html_scientific_notation_rate(
+                        inasafe_class['fatality_rate'])
+                    rate = u'%s%%' % rate
+                    row.add(m.Cell(rate))
+                elif inasafe_class.get('fatality_rate') == 0:
+                    row.add(m.Cell('0%'))
+                else:
+                    row.add(m.Cell(tr('unspecified')))
+
+            if is_hazard:
+                if 'displacement_rate' in inasafe_class:
+                    rate = inasafe_class['displacement_rate'] * 100
+                    rate = u'%.0f%%' % rate
+                    row.add(m.Cell(rate))
+                else:
+                    row.add(m.Cell(tr('unspecified')))
 
             if 'string_defaults' in inasafe_class:
                 defaults = None
@@ -1094,33 +1252,36 @@ def definition_to_message(
                 row.add(m.Cell(defaults))
             else:
                 row.add(m.Cell(tr('unspecified')))
-            # Min may be a single value or a dict of values so we need
-            # to check type and deal with it accordingly
-            if 'numeric_default_min' in inasafe_class:
-                if isinstance(inasafe_class['numeric_default_min'], dict):
-                    bullets = m.BulletedList()
-                    minima = inasafe_class['numeric_default_min']
-                    for key, value in minima.iteritems():
-                        bullets.add(u'%s : %s' % (key, value))
-                    row.add(m.Cell(bullets))
-                else:
-                    row.add(m.Cell(inasafe_class['numeric_default_min']))
-            else:
-                row.add(m.Cell(tr('unspecified')))
 
-            # Max may be a single value or a dict of values so we need
-            # to check type and deal with it accordingly
-            if 'numeric_default_max' in inasafe_class:
-                if isinstance(inasafe_class['numeric_default_max'], dict):
-                    bullets = m.BulletedList()
-                    maxima = inasafe_class['numeric_default_max']
-                    for key, value in maxima.iteritems():
-                        bullets.add(u'%s : %s' % (key, value))
-                    row.add(m.Cell(bullets))
+            if is_hazard:
+                # Min may be a single value or a dict of values so we need
+                # to check type and deal with it accordingly
+                if 'numeric_default_min' in inasafe_class:
+                    if isinstance(inasafe_class['numeric_default_min'], dict):
+                        bullets = m.BulletedList()
+                        minima = inasafe_class['numeric_default_min']
+                        for key, value in sorted(minima.iteritems()):
+                            bullets.add(u'%s : %s' % (key, value))
+                        row.add(m.Cell(bullets))
+                    else:
+                        row.add(m.Cell(inasafe_class['numeric_default_min']))
                 else:
-                    row.add(m.Cell(inasafe_class['numeric_default_max']))
-            else:
-                row.add(m.Cell(tr('unspecified')))
+                    row.add(m.Cell(tr('unspecified')))
+
+            if is_hazard:
+                # Max may be a single value or a dict of values so we need
+                # to check type and deal with it accordingly
+                if 'numeric_default_max' in inasafe_class:
+                    if isinstance(inasafe_class['numeric_default_max'], dict):
+                        bullets = m.BulletedList()
+                        maxima = inasafe_class['numeric_default_max']
+                        for key, value in sorted(maxima.iteritems()):
+                            bullets.add(u'%s : %s' % (key, value))
+                        row.add(m.Cell(bullets))
+                    else:
+                        row.add(m.Cell(inasafe_class['numeric_default_max']))
+                else:
+                    row.add(m.Cell(tr('unspecified')))
 
             table.add(row)
             # Description goes in its own row with spanning
@@ -1128,6 +1289,7 @@ def definition_to_message(
             row.add(m.Cell(''))
             row.add(m.Cell(inasafe_class['description'], span=7))
             table.add(row)
+
         # For hazard classes we also add the 'not affected' class manually:
         if definition['type'] == definitions.hazard_classification_type:
             row = m.Row()
@@ -1158,6 +1320,25 @@ def definition_to_message(
                 'This class IS required in the hazard keywords.')))
 
     return message
+
+
+def _citations_to_message(message, definition):
+    citations = m.Message()
+    bullets = m.BulletedList()
+    for citation in definition['citations']:
+        if citation['text'] in [None, '']:
+            continue
+        if citation['link'] in [None, '']:
+            bullets.add(m.Paragraph(citation['text']))
+        else:
+            bullets.add(m.Paragraph(
+                m.Link(citation['link'], citation['text'])))
+    if not bullets.is_empty():
+        citations.add(m.Paragraph(m.ImportantText(
+            tr('Citations:')
+        )))
+        citations.add(bullets)
+        message.add(citations)
 
 
 def _definition_icon_url(definition):
@@ -1249,8 +1430,8 @@ def _type_to_string(value):
     return type_map[value]
 
 
-def _make_defaults_table():
-    """Build headers for a table related to classes.
+def _make_defaults_hazard_table():
+    """Build headers for a table related to hazard classes.
 
     :return: A table with headers.
     :rtype: m.Table
@@ -1267,6 +1448,20 @@ def _make_defaults_table():
     row.add(m.Cell(tr('Default values'), header=True))
     row.add(m.Cell(tr('Default min'), header=True))
     row.add(m.Cell(tr('Default max'), header=True))
+    table.add(row)
+    return table
+
+
+def _make_defaults_exposure_table():
+    """Build headers for a table related to exposure classes.
+
+    :return: A table with headers.
+    :rtype: m.Table
+    """
+    table = m.Table(style_class='table table-condensed table-striped')
+    row = m.Row()
+    row.add(m.Cell(tr('Name'), header=True))
+    row.add(m.Cell(tr('Default values'), header=True))
     table.add(row)
     return table
 
