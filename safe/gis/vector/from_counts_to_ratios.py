@@ -97,7 +97,7 @@ def from_counts_to_ratios(layer, callback=None):
         for count_field, index in mapping.iteritems():
             count = feature[count_field]
             try:
-                new_value = count / total_count
+                new_value = count / float(total_count)
             except TypeError:
                 new_value = ''
             except ZeroDivisionError:
