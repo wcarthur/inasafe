@@ -19,10 +19,11 @@ from qgis.core import (
     QgsWKBTypes
 )
 
-from safe.common.exceptions import MemoryLayerCreationError
+from safe.common.exceptions import (
+    MemoryLayerCreationError, SpatialIndexCreationError)
 from safe.definitions.units import unit_metres, unit_square_metres
 from safe.definitions.utilities import definition
-from safe.gis.vector.clean_geometry import geometry_checker
+from safe.gis.vector.clean_geometry import geometry_checker, clean_layer
 from safe.utilities.profiling import profile
 from safe.utilities.rounding import convert_unit
 
@@ -179,6 +180,32 @@ def copy_layer(source, target):
 
 
 @profile
+def rename_fields(layer, fields_to_copy):
+    """Rename fields inside an attribute table.
+
+    Only since QGIS 2.16.
+
+    :param layer: The vector layer.
+    :type layer: QgsVectorLayer
+
+    :param fields_to_copy: Dictionary of fields to copy.
+    :type fields_to_copy: dict
+    """
+    for field in fields_to_copy:
+        index = layer.fieldNameIndex(field)
+        if index != -1:
+            layer.startEditing()
+            layer.renameAttribute(index, fields_to_copy[field])
+            layer.commitChanges()
+            LOGGER.info(
+                'Renaming field %s to %s' % (field, fields_to_copy[field]))
+        else:
+            LOGGER.info(
+                'Field %s not present in the layer while trying to renaming '
+                'it to %s' % (field, fields_to_copy[field]))
+
+
+@profile
 def copy_fields(layer, fields_to_copy):
     """Copy fields inside an attribute table.
 
@@ -210,7 +237,7 @@ def copy_fields(layer, fields_to_copy):
                     feature.id(), new_index, source_value)
 
             layer.commitChanges()
-            layer.updateFields()
+            layer.updateFields()  # Avoid crash #4729
 
 
 @profile
@@ -247,7 +274,25 @@ def create_spatial_index(layer):
     :return: The index.
     :rtype: QgsSpatialIndex
     """
-    spatial_index = QgsSpatialIndex(layer.getFeatures())
+    try:
+        spatial_index = QgsSpatialIndex(layer.getFeatures())
+    except BaseException:
+        # Spatial index is creating an unknown exception.
+        # https://github.com/inasafe/inasafe/issues/4304
+        # or https://gitter.im/inasafe/inasafe?at=5a2903d487680e6230e0359a
+        LOGGER.info(
+            'An Exception has been raised from the spatial index creation. '
+            'We will clean your layer and try again.')
+        new_layer = clean_layer(layer)
+        try:
+            spatial_index = QgsSpatialIndex(new_layer.getFeatures())
+        except BaseException:
+            # We tried one time to clean the layer, we can't do more.
+            LOGGER.info(
+                'An Exception has been raised from the spatial index '
+                'creation. Unfortunately, we already try to clean your layer. '
+                'We will stop here the process.')
+            raise SpatialIndexCreationError
     return spatial_index
 
 

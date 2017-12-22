@@ -17,6 +17,8 @@ from safe.processors.pre_processors import *
 # |--- size
 # |   |--- size rate  disabled in V4.0, ET 13/02/17
 # |   `--- productivity
+# |   `--- production cost
+# |   `--- production value
 # |--- distance
 # |--- bearing angle
 # |   |--- cardinality
@@ -58,5 +60,5 @@ post_processors = [
 ]
 
 pre_processors = [
-    pre_processors_nearby_places,
+    # pre_processors_nearby_places, Disabled for now until with have contours
 ]

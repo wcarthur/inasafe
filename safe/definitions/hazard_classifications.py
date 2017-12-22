@@ -509,7 +509,7 @@ flood_hazard_classes = {
             'name': tr('Wet'),
             'affected': True,
             'description': tr('Water is present above ground height.'),
-            'string_defaults': ['wet', '1', 'YES', 'y', 'yes', 'true'],
+            'string_defaults': ['wet', '1', 'YES', 'y', 'true'],
             'fatality_rate': None,
             'displacement_rate': 0.01,
             'numeric_default_min': 1,
@@ -528,7 +528,7 @@ flood_hazard_classes = {
             'name': tr('Dry'),
             'affected': False,
             'description': tr('No water encountered above ground height.'),
-            'string_defaults': ['dry', '0', 'No', 'n', 'no', 'false'],
+            'string_defaults': ['dry', '0', 'No', 'n', 'false'],
             'fatality_rate': None,
             'displacement_rate': 0.0,
             'numeric_default_min': 0,
@@ -653,6 +653,90 @@ flood_petabencana_hazard_classes = {
                 }
             ]
         }
+    ],
+    'classification_unit': tr('hazard zone')
+}
+
+inundation_dam_class = {
+    'key': 'inundation_dam_class',
+    'name': tr('Inundation classes'),
+    'description': tr(
+        'This type of classification refers to the division of flood areas '
+        'based on the range of water levels. This area is divided into 3 '
+        'areas of inundation including <b>Inundation 1</b>, '
+        '<b>Inundation 2</b>, and <b>Inundation 3</b>.'),
+    'type': hazard_classification_type,
+    'citations': [
+        {
+            'text': None,
+            'link': None
+        }
+    ],
+    'classes': [
+        {
+            'key': 'inundation_3',
+            'value': 3,
+            'color': red,
+            'name': tr('Inundation Class 3'),
+            'affected': True,
+            'description': tr('High water level above ground surface.'),
+            'string_defaults': ['Inundation 3'],
+            'fatality_rate': None,
+            'displacement_rate': 0.01,
+            'numeric_default_min': 1.5,
+            'numeric_default_max': big_number,
+            'citations': [
+                {
+                    'text': None,
+                    'link': None
+                }
+            ]
+        },
+        {
+            'key': 'inundation_2',
+            'value': 2,
+            'color': orange,
+            'name': tr('Inundation Class 2'),
+            'affected': False,
+            'description': tr('Medium water level above ground surface.'),
+            'string_defaults': ['Inundation 2'],
+            'fatality_rate': None,
+            'displacement_rate': 0.0,
+            'numeric_default_min': 0.6,
+            'numeric_default_max': 1.5,
+            'citations': [
+                {
+                    'text': None,
+                    'link': None
+                }
+            ]
+        },
+        {
+            'key': 'inundation_1',
+            'value': 1,
+            'color': yellow,
+            'name': tr('Inundation Class 1'),
+            'affected': False,
+            'description': tr('Low water level above ground surface.'),
+            'string_defaults': ['Inundation 1'],
+            'fatality_rate': None,
+            'displacement_rate': 0.0,
+            'numeric_default_min': 0,
+            'numeric_default_max': 0.6,
+            'citations': [
+                {
+                    'text': None,
+                    'link': None
+                }
+            ]
+        },
+    ],
+    'exposures': [
+        exposure_land_cover,
+        exposure_place,
+        exposure_population,
+        exposure_road,
+        exposure_structure
     ],
     'classification_unit': tr('hazard zone')
 }
@@ -1851,6 +1935,7 @@ hazard_classification = {
         generic_hazard_classes,
         flood_hazard_classes,
         flood_petabencana_hazard_classes,
+        inundation_dam_class,
         earthquake_mmi_scale,
         tsunami_hazard_classes,
         tsunami_hazard_population_classes,

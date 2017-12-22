@@ -71,6 +71,7 @@ from safe.report.impact_report import ImpactReport
 from safe.utilities.gis import qgis_version
 from safe.utilities.i18n import tr
 from safe.utilities.keyword_io import KeywordIO
+from safe.utilities.qgis_utilities import display_warning_message_bar
 from safe.utilities.qt import disable_busy_cursor, enable_busy_cursor
 from safe.utilities.resources import (
     get_ui_class,
@@ -78,6 +79,7 @@ from safe.utilities.resources import (
 from safe.utilities.settings import setting
 from safe.utilities.utilities import (
     is_keyword_version_supported,
+    basestring_to_message,
     get_error_message,
 )
 
@@ -102,6 +104,8 @@ class MultiExposureDialog(QDialog, FORM_CLASS):
         :type iface: QGisInterface
         """
         QDialog.__init__(self, parent)
+        self.use_selected_only = setting(
+            'useSelectedFeaturesOnly', expected_type=bool)
         self.parent = parent
         self.iface = iface
         self.setupUi(self)
@@ -130,7 +134,10 @@ class MultiExposureDialog(QDialog, FORM_CLASS):
             self.validate_impact_function)
         self.cbx_aggregation.currentIndexChanged.connect(
             self.validate_impact_function)
-        self.tab_widget.setCurrentIndex(0)
+
+        # Keep track of the current panel
+        self._current_index = 0
+        self.tab_widget.setCurrentIndex(self._current_index)
 
     def _tab_changed(self):
         """Triggered when the current tab is changed."""
@@ -139,7 +146,9 @@ class MultiExposureDialog(QDialog, FORM_CLASS):
             self.btn_back.setEnabled(False)
             self.btn_next.setEnabled(True)
         elif current == self.reportingTab:
-            self._populate_reporting_tab()
+            if self._current_index == 0:
+                # Only if the user is coming from the first tab
+                self._populate_reporting_tab()
             self.reporting_options_layout.setEnabled(
                 self._multi_exposure_if is not None)
             self.btn_back.setEnabled(True)
@@ -147,6 +156,7 @@ class MultiExposureDialog(QDialog, FORM_CLASS):
         else:
             self.btn_back.setEnabled(True)
             self.btn_next.setEnabled(False)
+        self._current_index = current
 
     def back_clicked(self):
         """Back button clicked."""
@@ -193,7 +203,6 @@ class MultiExposureDialog(QDialog, FORM_CLASS):
                 error = ''
                 layer.exportNamedStyle(style_document, error)
 
-                # For a raster, the provider type is 'gdal'
                 layers.append((
                     FROM_CANVAS['key'],
                     layer.name(),
@@ -414,8 +423,20 @@ class MultiExposureDialog(QDialog, FORM_CLASS):
                 add_ordered_combo_item(
                     self.cbx_hazard, title, source)
             elif layer_purpose == layer_purpose_aggregation['key']:
-                add_ordered_combo_item(
-                    self.cbx_aggregation, title, source)
+                if self.use_selected_only:
+                    count_selected = layer.selectedFeatureCount()
+                    if count_selected > 0:
+                        add_ordered_combo_item(
+                            self.cbx_aggregation,
+                            title,
+                            source,
+                            count_selected)
+                    else:
+                        add_ordered_combo_item(
+                            self.cbx_aggregation, title, source, None)
+                else:
+                    add_ordered_combo_item(
+                        self.cbx_aggregation, title, source, None)
             elif layer_purpose == layer_purpose_exposure['key']:
 
                 # fetching the exposure
@@ -469,12 +490,7 @@ class MultiExposureDialog(QDialog, FORM_CLASS):
         # Always set it to False
         self.btn_run.setEnabled(False)
 
-        use_selected_only = setting(
-            'useSelectedFeaturesOnly', expected_type=bool)
-
         for combo in self.combos_exposures.itervalues():
-            # if combo.count() > 1 and self.cbx_hazard.count():
-            #     self.button_box.button(QDialogButtonBox.Ok).setEnabled(True)
             if combo.count() == 1:
                 combo.setEnabled(False)
 
@@ -491,7 +507,8 @@ class MultiExposureDialog(QDialog, FORM_CLASS):
         multi_exposure_if.debug = False
         multi_exposure_if.callback = self.progress_callback
         if aggregation:
-            multi_exposure_if.use_selected_features_only = use_selected_only
+            multi_exposure_if.use_selected_features_only = (
+                self.use_selected_only)
             multi_exposure_if.aggregation = aggregation
         else:
             multi_exposure_if.crs = (
@@ -525,6 +542,7 @@ class MultiExposureDialog(QDialog, FORM_CLASS):
         enable_busy_cursor()
         try:
             code, message = self._multi_exposure_if.run()
+            message = basestring_to_message(message)
             if code == ANALYSIS_FAILED_BAD_INPUT:
                 self.hide_busy()
                 LOGGER.info(tr(
@@ -546,16 +564,30 @@ class MultiExposureDialog(QDialog, FORM_CLASS):
                 return code, message
 
             if setting('generate_report', True, bool):
+                LOGGER.info(
+                    'Reports are going to be generated for the multiexposure.')
+                # Report for the multi exposure
                 report = [standard_multi_exposure_impact_report_metadata_html]
-                error_code, message = (
-                    self._multi_exposure_if.generate_report(
-                        report))
-
+                error_code, message = (self._multi_exposure_if.generate_report(
+                    report))
+                message = basestring_to_message(message)
                 if error_code == ImpactReport.REPORT_GENERATION_FAILED:
                     LOGGER.info(
                         'The impact report could not be generated.')
                     send_error_message(self, message)
                     LOGGER.info(message.to_text())
+                    disable_busy_cursor()
+                    self.set_enabled_buttons(True)
+                    return error_code, message
+            else:
+                LOGGER.info(
+                    'Reports are not generated because of your settings.')
+                display_warning_message_bar(
+                    tr('Reports'),
+                    tr('Reports are not going to be generated because of your '
+                       'InaSAFE settings.'),
+                    duration=10
+                )
 
             # We always create the multi exposure group because we need
             # reports to be generated.
@@ -588,25 +620,57 @@ class MultiExposureDialog(QDialog, FORM_CLASS):
                         0, analysis.name)
                     detailed_group.setVisible(Qt.Checked)
                     add_impact_layers_to_canvas(analysis, group=detailed_group)
+
+                if self.iface:
+                    self.iface.setActiveLayer(
+                        self._multi_exposure_if.analysis_impacted)
             else:
                 add_layers_to_canvas_with_custom_orders(
                     self.ordered_expected_layers(),
-                    self._multi_exposure_if)
+                    self._multi_exposure_if,
+                    self.iface)
 
             if setting('generate_report', True, bool):
+                LOGGER.info(
+                    'Reports are going to be generated for each single '
+                    'exposure.')
+                # Report for the single exposure with hazard
                 for analysis in self._multi_exposure_if.impact_functions:
                     # we only want to generate non pdf/qpt report
                     html_components = [standard_impact_report_metadata_html]
                     error_code, message = (
                         analysis.generate_report(html_components))
-
+                    message = basestring_to_message(message)
                     if error_code == (
                             ImpactReport.REPORT_GENERATION_FAILED):
                         LOGGER.info(
-                            'The impact report could not be '
-                            'generated.')
+                            'The impact report could not be generated.')
                         send_error_message(self, message)
                         LOGGER.info(message.to_text())
+                        disable_busy_cursor()
+                        self.set_enabled_buttons(True)
+                        return error_code, message
+            else:
+                LOGGER.info(
+                    'Reports are not generated because of your settings.')
+                display_warning_message_bar(
+                    tr('Reports'),
+                    tr('Reports are not going to be generated because of your '
+                       'InaSAFE settings.'),
+                    duration=10,
+                )
+
+            # If zoom to impact is enabled
+            if setting(
+                    'setZoomToImpactFlag', expected_type=bool):
+                self.iface.zoomToActiveLayer()
+
+            # If hide exposure layers
+            if setting('setHideExposureFlag', expected_type=bool):
+                legend = self.iface.legendInterface()
+                for combo in self.combos_exposures.itervalues():
+                    layer = layer_from_combo(combo)
+                    legend.setLayerVisible(layer, False)
 
             self.done(QDialog.Accepted)
 

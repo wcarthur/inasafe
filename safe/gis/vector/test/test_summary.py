@@ -3,7 +3,8 @@
 import unittest
 
 from safe.test.utilities import (
-    load_test_vector_layer, qgis_app)
+    load_test_vector_layer)
+from safe.test.qgis_app import qgis_app
 
 from safe.definitions.fields import (
     total_field,
@@ -12,7 +13,7 @@ from safe.definitions.fields import (
     exposure_count_field,
     productivity_field,
     production_cost_field,
-    production_value_field
+    production_value_field,
 )
 from safe.gis.vector.tools import read_dynamic_inasafe_field
 from safe.gis.vector.summary_1_aggregate_hazard import (
@@ -245,14 +246,15 @@ class TestSummary(unittest.TestCase):
 
         # We should have
         # one column per hazard
-        # one for the exposure
-        # one for total affected
-        # one for total not affected
-        # one for total not exposed
-        # one for total
-        # one for affected productivity
-        # one for affected production cost
-        # one for affected production value
+
+        # 1. one for the exposure
+        # 2. one for total affected
+        # 3. one for total not affected
+        # 4. one for total not exposed
+        # 5. one for total
+        # 6. one for affected productivity
+        # 7. one for affected production cost
+        # 8. one for affected production value
         self.assertEqual(layer.fields().count(), len(unique_hazard) + 8)
 
     def test_summarize_result(self):
@@ -266,11 +268,11 @@ class TestSummary(unittest.TestCase):
 
         summarizer_dicts = summarize_result(exposure_summary)
 
-        productivity_summary = summarizer_dicts.get(productivity_field['key'])
+        productivity_summary = summarizer_dicts.get('affected_productivity')
         production_cost_summary = summarizer_dicts.get(
-            production_cost_field['key'])
+            'affected_production_cost')
         production_value_summary = summarizer_dicts.get(
-            production_value_field['key'])
+            'affected_production_value')
 
         self.assertIsNotNone(productivity_summary)
         self.assertIsNotNone(production_cost_summary)

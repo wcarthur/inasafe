@@ -310,6 +310,7 @@ class TestPostProcessors(unittest.TestCase):
             self.assertAlmostEqual(
                 production_value, size_value * production_value_rate)
 
+
     def test_affected_post_processor(self):
         """Test affected  post processor."""
         impact_layer = load_test_vector_layer(
@@ -358,6 +359,9 @@ class TestPostProcessors(unittest.TestCase):
             'inasafe_fields': {
                 'displaced_field': 'displaced',
                 'female_ratio_field': 'female_r'
+            },
+            'exposure_keywords': {
+                'exposure': exposure_population['key']
             }
         }
         # noinspection PyTypeChecker

@@ -771,6 +771,7 @@ class TestKeywordWizard(unittest.TestCase):
             u'commercial': [u'Commercial', u'Industrial'],
             u'recreation': [],
             u'public facility': [],
+            u'evacuation centre': [],
             u'other': []
         }
         dialog.step_kw_classify.populate_classified_values(
@@ -1906,12 +1907,6 @@ class TestKeywordWizard(unittest.TestCase):
         # Click next to finish set the InaSAFE fields
         dialog.pbnNext.click()
 
-        # Check field mapping steps
-        self.check_current_step(dialog.step_kw_fields_mapping)
-
-        # Click next to continue
-        dialog.pbnNext.click()
-
         # Check if in source step
         self.check_current_step(dialog.step_kw_source)
 
@@ -2061,7 +2056,9 @@ class TestKeywordWizard(unittest.TestCase):
                 exposure_land_cover['key']: {
                     flood_hazard_classes['key']: {
                         'active': True,
-                        'classes': {}
+                        'classes': {
+                            'wet': [1.0, 2.0, 3.0]
+                        }
                     }
                 }
             }

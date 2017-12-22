@@ -462,10 +462,13 @@ def sum_fields(layer, output_field_key, input_fields):
     if len(input_fields) == 1:
         # Name is different, copy it
         if input_fields[0] != output_field_name:
-            copy_fields(layer, {
-                input_fields[0]: output_field_name})
-        # Name is same, do nothing
+            to_rename = {input_fields[0]: output_field_name}
+            # We copy only, it will be deleted later.
+            # We can't rename the field, we need to copy it as the same
+            # field might be used many times in the FMT tool.
+            copy_fields(layer, to_rename)
         else:
+            # Name is same, do nothing
             return
     else:
         # Creating expression

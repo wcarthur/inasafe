@@ -20,7 +20,6 @@ from safe.common.version import get_version
 from safe.defaults import supporters_logo_path, default_north_arrow_path
 from safe.definitions.constants import qvariant_whole_numbers, GLOBAL
 from safe.definitions.currencies import currencies
-from safe.definitions.default_settings import inasafe_default_settings
 from safe.definitions.earthquake import EARTHQUAKE_FUNCTIONS
 from safe.definitions.field_groups import all_field_groups
 from safe.definitions.fields import (
@@ -44,6 +43,12 @@ from safe.utilities.settings import (
     setting,
     set_setting,
 )
+from safe.common.parameters.percentage_parameter_widget import (
+    PercentageParameterWidget)
+
+extra_parameter = [
+    (FloatParameter, PercentageParameterWidget)
+]
 
 __copyright__ = "Copyright 2016, The InaSAFE Project"
 __license__ = "GPL version 3"
@@ -148,13 +153,14 @@ class OptionsDialog(QDialog, FORM_CLASS):
         # Label
         self.preference_label = QLabel()
         self.preference_label.setText(tr(
-            'Please set parameters for population exposed to each hazard '
-            'class below.'
+            'Please set parameters for each hazard class below. '
+            'Affected status and displacement rates selected on '
+            'this tab are only applied to exposed populations. '
         ))
         self.preference_layout.addWidget(self.preference_label)
 
         # Profile preference widget
-        self.profile_widget = ProfileWidget(self)
+        self.profile_widget = ProfileWidget()
         self.preference_layout.addWidget(self.profile_widget)
 
         # Demographic tab
@@ -233,7 +239,7 @@ class OptionsDialog(QDialog, FORM_CLASS):
         :param check_box: Check box to show and set the setting.
         :type check_box: PyQt4.QtGui.QCheckBox.QCheckBox
         """
-        self.settings.setValue('inasafe/%s' % key, check_box.isChecked())
+        set_setting(key, check_box.isChecked(), qsettings=self.settings)
 
     def restore_boolean_setting(self, key, check_box):
         """Set check_box according to setting of key.
@@ -244,8 +250,7 @@ class OptionsDialog(QDialog, FORM_CLASS):
         :param check_box: Check box to show and set the setting.
         :type check_box: PyQt4.QtGui.QCheckBox.QCheckBox
         """
-        flag = bool(self.settings.value(
-            'inasafe/%s' % key, inasafe_default_settings[key], type=bool))
+        flag = setting(key, expected_type=bool, qsettings=self.settings)
         check_box.setChecked(flag)
 
     def save_text_setting(self, key, line_edit):
@@ -257,7 +262,7 @@ class OptionsDialog(QDialog, FORM_CLASS):
         :param line_edit: Line edit for user to edit the setting
         :type line_edit: PyQt4.QtGui.QLineEdit.QLineEdit
         """
-        self.settings.setValue('inasafe/%s' % key, line_edit.text())
+        set_setting(key, line_edit.text(), self.settings)
 
     def restore_text_setting(self, key, line_edit):
         """Set line_edit text according to setting of key.
@@ -268,8 +273,7 @@ class OptionsDialog(QDialog, FORM_CLASS):
         :param line_edit: Line edit for user to edit the setting
         :type line_edit: PyQt4.QtGui.QLineEdit.QLineEdit
         """
-        value = self.settings.value(
-            'inasafe/%s' % key, inasafe_default_settings[key], type=str)
+        value = setting(key, expected_type=str, qsettings=self.settings)
         line_edit.setText(value)
 
     def restore_state(self):
@@ -283,9 +287,11 @@ class OptionsDialog(QDialog, FORM_CLASS):
             self.restore_text_setting(key, line_edit)
 
         # User Directory
-        user_directory_path = self.settings.value(
-            'inasafe/defaultUserDirectory',
-            temp_dir('impacts'), type=str)
+        user_directory_path = setting(
+            key='defaultUserDirectory',
+            default=temp_dir('impacts'),
+            expected_type=str,
+            qsettings=self.settings)
         custom_user_directory_flag = (
             user_directory_path != temp_dir('impacts'))
         self.custom_UseUserDirectory_checkbox.setChecked(
@@ -322,8 +328,11 @@ class OptionsDialog(QDialog, FORM_CLASS):
         self.update_earthquake_info()
 
         # Restore North Arrow Image Path
-        north_arrow_path = self.settings.value(
-            'inasafe/north_arrow_path', default_north_arrow_path(), type=str)
+        north_arrow_path = setting(
+            key='north_arrow_path',
+            default=default_north_arrow_path(),
+            expected_type=str,
+            qsettings=self.settings)
         custom_north_arrow_flag = (
             north_arrow_path != default_north_arrow_path())
         self.custom_north_arrow_checkbox.setChecked(custom_north_arrow_flag)
@@ -331,30 +340,41 @@ class OptionsDialog(QDialog, FORM_CLASS):
         self.leNorthArrowPath.setText(north_arrow_path)
 
         # Restore Report Template Directory Path
-        report_template_directory = self.settings.value(
-            'inasafe/reportTemplatePath', '', type=str)
+        report_template_directory = setting(
+            key='reportTemplatePath',
+            default='',
+            expected_type=str,
+            qsettings=self.settings)
         custom_templates_dir_flag = (report_template_directory != '')
         self.custom_templates_dir_checkbox.setChecked(
             custom_templates_dir_flag)
         self.leReportTemplatePath.setText(report_template_directory)
 
         # Restore Disclaimer
-        org_disclaimer = self.settings.value(
-            'inasafe/reportDisclaimer', disclaimer(), type=str)
+        org_disclaimer = setting(
+            key='reportDisclaimer',
+            default=disclaimer(),
+            expected_type=str,
+            qsettings=self.settings)
         custom_org_disclaimer_flag = (org_disclaimer != disclaimer())
         self.custom_org_disclaimer_checkbox.setChecked(
             custom_org_disclaimer_flag)
         self.txtDisclaimer.setPlainText(org_disclaimer)
 
         # Restore Organisation Logo Path
-        org_logo_path = self.settings.value(
-            'inasafe/organisation_logo_path',
-            supporters_logo_path(),
-            type=str)
+        org_logo_path = setting(
+            key='organisation_logo_path',
+            default=supporters_logo_path(),
+            expected_type=str,
+            qsettings=self.settings)
         # Check if the path is default one or not
         custom_org_logo_flag = org_logo_path != supporters_logo_path()
         self.organisation_logo_path_line_edit.setText(org_logo_path)
         self.custom_organisation_logo_check_box.setChecked(
+            custom_org_logo_flag)
+        self.organisation_logo_path_line_edit.setEnabled(
+            custom_org_logo_flag)
+        self.open_organisation_logo_path_button.setEnabled(
             custom_org_logo_flag)
         # Manually call here
         self.update_logo_preview()
@@ -374,21 +394,24 @@ class OptionsDialog(QDialog, FORM_CLASS):
         for key, line_edit in self.text_settings.items():
             self.save_text_setting(key, line_edit)
 
-        self.settings.setValue(
-            'inasafe/north_arrow_path',
-            self.leNorthArrowPath.text())
-        self.settings.setValue(
-            'inasafe/organisation_logo_path',
-            self.organisation_logo_path_line_edit.text())
-        self.settings.setValue(
-            'inasafe/reportTemplatePath',
-            self.leReportTemplatePath.text())
-        self.settings.setValue(
-            'inasafe/reportDisclaimer',
-            self.txtDisclaimer.toPlainText())
-        self.settings.setValue(
-            'inasafe/defaultUserDirectory',
-            self.leUserDirectoryPath.text())
+        set_setting(
+            'north_arrow_path', self.leNorthArrowPath.text(), self.settings)
+        set_setting(
+            'organisation_logo_path',
+            self.organisation_logo_path_line_edit.text(),
+            self.settings)
+        set_setting(
+            'reportTemplatePath',
+            self.leReportTemplatePath.text(),
+            self.settings)
+        set_setting(
+            'reportDisclaimer',
+            self.txtDisclaimer.toPlainText(),
+            self.settings)
+        set_setting(
+            'defaultUserDirectory',
+            self.leUserDirectoryPath.text(),
+            self.settings)
         index = self.earthquake_function.currentIndex()
         value = self.earthquake_function.itemData(index)
         set_setting('earthquake_function', value, qsettings=self.settings)
@@ -506,10 +529,11 @@ class OptionsDialog(QDialog, FORM_CLASS):
         is_checked = self.custom_organisation_logo_check_box.isChecked()
         if is_checked:
             # Use previous org logo path
-            path = self.settings.value(
-                'inasafe/organisation_logo_path',
-                supporters_logo_path(),
-                type=str)
+            path = setting(
+                key='organisation_logo_path',
+                default=supporters_logo_path(),
+                expected_type=str,
+                qsettings=self.settings)
         else:
             # Set organisation path line edit to default one
             path = supporters_logo_path()
@@ -537,10 +561,11 @@ class OptionsDialog(QDialog, FORM_CLASS):
         is_checked = self.custom_north_arrow_checkbox.isChecked()
         if is_checked:
             # Show previous north arrow path
-            path = self.settings.value(
-                'inasafe/north_arrow_path',
-                default_north_arrow_path(),
-                type=str)
+            path = setting(
+                key='north_arrow_path',
+                default=default_north_arrow_path(),
+                expected_type=str,
+                qsettings=self.settings)
         else:
             # Set the north arrow line edit to default one
             path = default_north_arrow_path()
@@ -554,8 +579,11 @@ class OptionsDialog(QDialog, FORM_CLASS):
         is_checked = self.custom_UseUserDirectory_checkbox.isChecked()
         if is_checked:
             # Show previous templates dir
-            path = self.settings.value(
-                'inasafe/defaultUserDirectory', '', type=str)
+            path = setting(
+                key='defaultUserDirectory',
+                default='',
+                expected_type=str,
+                qsettings=self.settings)
         else:
             # Set the template report dir to ''
             path = temp_dir('impacts')
@@ -569,8 +597,11 @@ class OptionsDialog(QDialog, FORM_CLASS):
         is_checked = self.custom_templates_dir_checkbox.isChecked()
         if is_checked:
             # Show previous templates dir
-            path = self.settings.value(
-                'inasafe/reportTemplatePath', '', type=str)
+            path = setting(
+                key='reportTemplatePath',
+                default='',
+                expected_type=str,
+                qsettings=self.settings)
         else:
             # Set the template report dir to ''
             path = ''
@@ -584,8 +615,11 @@ class OptionsDialog(QDialog, FORM_CLASS):
         is_checked = self.custom_org_disclaimer_checkbox.isChecked()
         if is_checked:
             # Show previous organisation disclaimer
-            org_disclaimer = self.settings.value(
-                'inasafe/reportDisclaimer', disclaimer(), type=str)
+            org_disclaimer = setting(
+                'reportDisclaimer',
+                default=disclaimer(),
+                expected_type=str,
+                qsettings=self.settings)
         else:
             # Set the organisation disclaimer to the default one
             org_disclaimer = disclaimer()
@@ -670,7 +704,9 @@ class OptionsDialog(QDialog, FORM_CLASS):
                 if parameter:
                     parameters.append(parameter)
             parameter_container = ParameterContainer(
-                parameters, description_text=field_group['description']
+                parameters,
+                description_text=field_group['description'],
+                extra_parameters=extra_parameter
             )
             parameter_container.setup_ui(must_scroll=False)
             group_box_inner_layout = QVBoxLayout()
@@ -692,7 +728,9 @@ class OptionsDialog(QDialog, FORM_CLASS):
                 'these variables.')
             parameter_container = ParameterContainer(
                 self.default_value_parameters,
-                description_text=description_text)
+                description_text=description_text,
+                extra_parameters=extra_parameter
+            )
             parameter_container.setup_ui(must_scroll=False)
             self.other_group_box = QGroupBox(tr('Non-group fields'))
             other_group_inner_layout = QVBoxLayout()
@@ -714,7 +752,20 @@ class OptionsDialog(QDialog, FORM_CLASS):
             data = generate_default_profile()
         else:
             data = setting('population_preference', generate_default_profile())
-        self.profile_widget.data = data
+        if not isinstance(data, dict):
+            LOGGER.debug(
+                'population preference is not a dictionary. InaSAFE will use '
+                'the default one.')
+            data = generate_default_profile()
+        try:
+            self.profile_widget.data = data
+        except KeyError as e:
+            LOGGER.debug(
+                'Population preference is not in correct format. InaSAFE will '
+                'use the default one.')
+            LOGGER.debug(e)
+            data = generate_default_profile()
+            self.profile_widget.data = data
 
     @staticmethod
     def age_ratios():

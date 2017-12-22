@@ -19,8 +19,6 @@ from qgis.core import QgsApplication
 from safe import messaging as m
 from safe.common.exceptions import NoKeywordsFoundError, MetadataReadError
 from safe.common.utilities import unique_filename
-from safe.common.version import get_version
-from safe.definitions.messages import disclaimer
 from safe.definitions.versions import (
     inasafe_keyword_version,
     keyword_version_compatibilities)
@@ -38,6 +36,31 @@ __revision__ = '$Format:%H$'
 INFO_STYLE = styles.BLUE_LEVEL_4_STYLE
 
 LOGGER = logging.getLogger('InaSAFE')
+
+
+def basestring_to_message(text):
+    """Convert a basestring to a Message object if needed.
+
+    Avoid using this function, better to create the Message object yourself.
+    This one is very generic.
+
+    This function exists ust in case we get a basestring and we really need a
+    Message object.
+
+    :param text: The text.
+    :type text: basestring, Message
+
+    :return: The message object.
+    :rtype: message
+    """
+    if isinstance(text, Message):
+        return text
+    elif text is None:
+        return ''
+    else:
+        report = m.Message()
+        report.add(text)
+        return report
 
 
 def get_error_message(exception, context=None, suggestion=None):
@@ -189,78 +212,6 @@ def generate_expression_help(description, examples, extra_information=None):
         help = populate_bullet_list(help, extra_information['detail'])
 
     return help
-
-
-def impact_attribution(keywords, inasafe_flag=False):
-    """Make a little table for attribution of data sources used in impact.
-
-    :param keywords: A keywords dict for an impact layer.
-    :type keywords: dict
-
-    :param inasafe_flag: bool - whether to show a little InaSAFE promotional
-        text in the attribution output. Defaults to False.
-
-    :returns: An html snippet containing attribution information for the impact
-        layer. If no keywords are present or no appropriate keywords are
-        present, None is returned.
-    :rtype: safe.messaging.Message
-    """
-    if keywords is None:
-        return None
-
-    join_words = ' - %s ' % tr('sourced from')
-    analysis_details = tr('Analysis details')
-    hazard_details = tr('Hazard details')
-    hazard_title_keywords = 'hazard_title'
-    hazard_source_keywords = 'hazard_source'
-    exposure_details = tr('Exposure details')
-    exposure_title_keywords = 'exposure_title'
-    exposure_source_keyword = 'exposure_source'
-
-    if hazard_title_keywords in keywords:
-        hazard_title = tr(keywords[hazard_title_keywords])
-    else:
-        hazard_title = tr('Hazard layer')
-
-    if hazard_source_keywords in keywords:
-        hazard_source = tr(keywords[hazard_source_keywords])
-    else:
-        hazard_source = tr('an unknown source')
-
-    if exposure_title_keywords in keywords:
-        exposure_title = keywords[exposure_title_keywords]
-    else:
-        exposure_title = tr('Exposure layer')
-
-    if exposure_source_keyword in keywords:
-        exposure_source = keywords[exposure_source_keyword]
-    else:
-        exposure_source = tr('an unknown source')
-
-    report = m.Message()
-    report.add(m.Heading(analysis_details, **INFO_STYLE))
-    report.add(hazard_details)
-    report.add(m.Paragraph(
-        hazard_title,
-        join_words,
-        hazard_source))
-
-    report.add(exposure_details)
-    report.add(m.Paragraph(
-        exposure_title,
-        join_words,
-        exposure_source))
-
-    if inasafe_flag:
-        report.add(m.Heading(tr('Software notes'), **INFO_STYLE))
-        # noinspection PyUnresolvedReferences
-        inasafe_phrase = tr(
-            'This report was created using InaSAFE version %s. Visit '
-            'http://inasafe.org to get your free copy of this software! %s'
-        ) % (get_version(), disclaimer())
-
-        report.add(m.Paragraph(m.Text(inasafe_phrase)))
-    return report
 
 
 def open_in_browser(file_path):

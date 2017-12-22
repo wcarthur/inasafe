@@ -107,6 +107,7 @@ from safe.utilities.resources import get_ui_class
 from safe.utilities.settings import setting, set_setting
 from safe.utilities.utilities import (
     get_error_message,
+    basestring_to_message,
     is_keyword_version_supported,
 )
 from safe.utilities.utilities import is_plugin_installed
@@ -778,7 +779,8 @@ class Dock(QtGui.QDockWidget, FORM_CLASS):
                     InvalidParameterError,
                     NoKeywordsFoundError,
                     MetadataReadError,
-                    AttributeError):
+                    # AttributeError  This is hiding some real error. ET
+                    ):
                 # Added this check in 3.2 for #1861
                 active_layer = self.iface.activeLayer()
                 if active_layer is None:
@@ -1262,6 +1264,7 @@ class Dock(QtGui.QDockWidget, FORM_CLASS):
         self.impact_function.debug_mode = self.debug_mode.isChecked()
         try:
             status, message = self.impact_function.run()
+            message = basestring_to_message(message)
         except:
             # We have an exception only if we are in debug mode.
             # We want to display the datastore and then
@@ -1299,6 +1302,7 @@ class Dock(QtGui.QDockWidget, FORM_CLASS):
             legend.setLayerVisible(qgis_exposure, False)
 
         if setting('generate_report', True, bool):
+            LOGGER.info('Reports are going to be generated the analysis.')
             # we only want to generate non pdf/qpt report
             html_components = [standard_impact_report_metadata_html]
             error_code, message = self.impact_function.generate_report(
@@ -1311,6 +1315,15 @@ class Dock(QtGui.QDockWidget, FORM_CLASS):
                 send_error_message(self, message)
                 LOGGER.info(message.to_text())
                 return ANALYSIS_FAILED_BAD_CODE, message
+        else:
+            LOGGER.info(
+                'Reports are not generated because of your settings.')
+            display_warning_message_bar(
+                tr('Reports'),
+                tr('Reports are not going to be generated because of your '
+                   'InaSAFE settings.'),
+                duration=10
+            )
 
         if self.impact_function.debug_mode:
             add_debug_layers_to_canvas(self.impact_function)
@@ -1516,9 +1529,13 @@ class Dock(QtGui.QDockWidget, FORM_CLASS):
             """
             if key in duplicated_global_variables.keys():
                 return
-            if isinstance(value, (list, tuple, set, dict)):
-                # Skip if the type is too complex.
+            if isinstance(value, (list, tuple, set)):
+                # Skip if the type is too complex (list of note, actions)
                 return
+            elif isinstance(value, dict):
+                for dict_key, dict_value in value.items():
+                    write_project_variable(
+                        '%s__%s' % (key, dict_key), dict_value)
             elif isinstance(value, (bool, str, unicode, Number)):
                 # Don't use get_name for field
                 if 'field' in key:

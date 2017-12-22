@@ -9,11 +9,9 @@ from safe.definitions.fields import (
     production_value_rate_field,
     productivity_field,
     production_cost_field,
-    production_value_field
+    production_value_field,
 )
-from safe.processors import (
-    field_input_type)
-from safe.processors import formula_process
+from safe.processors import formula_process, field_input_type
 from safe.utilities.i18n import tr
 
 __copyright__ = "Copyright 2017, The InaSAFE Project"
@@ -25,7 +23,7 @@ post_processor_productivity = {
     'key': 'post_processor_productivity',
     'name': tr('Productivity Post Processor'),
     'description': tr(
-        'A post processor to calculate the productivity for each feature'
+        'A post processor to calculate the productivity for each feature.'
     ),
     'input': {
         'productivity_rate': {
@@ -98,5 +96,5 @@ post_processor_production_value = {
 productivity_post_processors = [
     post_processor_productivity,
     post_processor_production_cost,
-    post_processor_production_value
+    post_processor_production_value,
 ]

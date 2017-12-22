@@ -11,7 +11,6 @@ from distutils.version import StrictVersion
 import qgis  # NOQA pylint: disable=unused-import
 # Import the PyQt and QGIS libraries
 from qgis.core import (
-    QGis,
     QgsRectangle,
     QgsRasterLayer,
     QgsMapLayerRegistry,
@@ -42,6 +41,7 @@ from safe.common.exceptions import (
     NoKeywordsFoundError,
     MetadataReadError,
 )
+from safe.common.signals import send_static_message
 from safe.utilities.resources import resources_path
 from safe.utilities.gis import is_raster_layer
 from safe.definitions.layer_purposes import (
@@ -49,6 +49,7 @@ from safe.definitions.layer_purposes import (
 )
 from safe.definitions.utilities import get_field_groups
 from safe.utilities.keyword_io import KeywordIO
+from safe.utilities.utilities import is_keyword_version_supported
 from safe.utilities.settings import setting, set_setting
 LOGGER = logging.getLogger('InaSAFE')
 
@@ -786,6 +787,11 @@ class Plugin(object):
         dialog.show_option_dialog()
         if dialog.exec_():  # modal
             self.dock_widget.read_settings()
+            from safe.gui.widgets.message import getting_started_message
+            send_static_message(self.dock_widget, getting_started_message())
+            # Issue #4734, make sure to update the combobox after update the
+            # InaSAFE option
+            self.dock_widget.get_layers()
 
     def show_welcome_message(self):
         """Show the welcome message."""
@@ -801,7 +807,7 @@ class Plugin(object):
         # Set previous_version to the current inasafe_version
         set_setting('previous_version', inasafe_version)
 
-        if setting('always_show_welcome_message'):
+        if setting('always_show_welcome_message', expected_type=bool):
             # Show if it the setting said so
             show_message = True
         elif previous_version < current_version:
@@ -892,12 +898,7 @@ class Plugin(object):
         layer = QgsRasterLayer(path, self.tr('OpenStreetMap'))
         registry = QgsMapLayerRegistry.instance()
 
-        # For older versions we just add directly to the top of legend
-        if QGis.QGIS_VERSION_INT < 20400:
-            # True flag adds layer directly to legend
-            registry.addMapLayer(layer, True)
-            return
-        # Otherwise try to add it as the last layer in the list
+        # Try to add it as the last layer in the list
         # False flag prevents layer being added to legend
         registry.addMapLayer(layer, False)
         root = QgsProject.instance().layerTreeRoot()
@@ -995,24 +996,29 @@ class Plugin(object):
                     enable_field_mapping_tool = False
                 else:
                     keywords = KeywordIO().read_keywords(layer)
-                    layer_purpose = keywords.get('layer_purpose')
-
-                    if not layer_purpose:
+                    supported = is_keyword_version_supported(
+                        keywords.get('keyword_version'))
+                    if not supported:
                         enable_field_mapping_tool = False
                     else:
-                        if layer_purpose == layer_purpose_exposure['key']:
-                            layer_subcategory = keywords.get('exposure')
-                        elif layer_purpose == layer_purpose_hazard['key']:
-                            layer_subcategory = keywords.get('hazard')
-                        else:
-                            layer_subcategory = None
-                        field_groups = get_field_groups(
-                            layer_purpose, layer_subcategory)
-                        if len(field_groups) == 0:
-                            # No field group, disable field mapping tool.
+                        layer_purpose = keywords.get('layer_purpose')
+
+                        if not layer_purpose:
                             enable_field_mapping_tool = False
                         else:
-                            enable_field_mapping_tool = True
+                            if layer_purpose == layer_purpose_exposure['key']:
+                                layer_subcategory = keywords.get('exposure')
+                            elif layer_purpose == layer_purpose_hazard['key']:
+                                layer_subcategory = keywords.get('hazard')
+                            else:
+                                layer_subcategory = None
+                            field_groups = get_field_groups(
+                                layer_purpose, layer_subcategory)
+                            if len(field_groups) == 0:
+                                # No field group, disable field mapping tool.
+                                enable_field_mapping_tool = False
+                            else:
+                                enable_field_mapping_tool = True
             else:
                 enable_field_mapping_tool = False
         except (KeywordNotFoundError, NoKeywordsFoundError, MetadataReadError):
